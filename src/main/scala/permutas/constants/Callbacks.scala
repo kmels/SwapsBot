@@ -1,0 +1,11 @@
+package permutas.constants
+
+object Callbacks extends Enumeration {
+  val ADD_SENDER_AS_PAYEE,
+  HTLC_DATE_SORT,
+  HTLC_AMOUNT_SORT,
+  HTLC_DO_SWEEP,
+  HTLC_DO_REFUND,
+  NEXT_HTLC, OPEN_TX_LINK,
+  PREV_HTLC, SET_MEMO, SWAP_LIMIT_FILL, SWAP_COUNTER_LOCK, VIEW_HTLC = Value
+}

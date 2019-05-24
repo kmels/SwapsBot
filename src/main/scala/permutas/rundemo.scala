@@ -1,10 +1,15 @@
+package permutas
+
+import permutas.constants._
+import permutas.i18n.translations
+
 import java.io.{File, Serializable}
 import java.math.BigInteger
 import java.net.InetAddress
 import java.security.SecureRandom
 import java.util.Date
 
-import Main.{CallbackName, _}
+import Main._
 import com.google.common.net.InetAddresses
 import io.nayuki.qrcodegen.QrCode
 import org.bitcoinj.core._
@@ -50,6 +55,7 @@ import org.bitcoinj.core.Transaction.SigHash
 import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.utils.BIP47Util
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText
+
 
 /*
 
@@ -273,6 +279,10 @@ class Swap(params: NetworkParameters) {
 }
 
 object Main {
+
+  import Collections._
+  import States._
+
   /*
    * Wallets
    *   1 BSV
@@ -335,196 +345,17 @@ object Main {
   val adminId = 111720349
   val faucetCoin = Coin.valueOf(0, 2)
 
-  object CommandName extends Enumeration {
-    val ADD_PAYEE, ADDRESSLIST, BACK, BROADCAST, BORROW, CANCEL, ENCODE, ENGLISH_LANG, FAUCET,
-    GET_PAYEE, HTLCLIST, INFO, LANGUAGE, LOAN, LOCK, LOCK_SWAP, LOCK_LOAN, PAYEES, PEERS, RESTORE, RATE, RESCAN,
-    SEED, SETTINGS, SPANISH_LANG, SPEND, SWAPS, SWEEP, TRANSACTIONS, VIEWSCRIPT, WALLETS, WHOAMI = Value
-  }
-
-  object CallbackName extends Enumeration {
-    val ADD_SENDER_AS_PAYEE,
-    HTLC_DATE_SORT, HTLC_AMOUNT_SORT, HTLC_DO_SWEEP, HTLC_DO_REFUND, NEXT_HTLC, OPEN_TX_LINK,
-    PREV_HTLC, SET_MEMO, SWAP_LIMIT_FILL, SWAP_COUNTER_LOCK, VIEW_HTLC = Value
-  }
-
-  object StateName extends Enumeration {
-    val ADD_NEW_PAYEE, ADD_NEW_PAYEE_ADDRESS, ADDRESS_LIST, BROADCAST_PAYEE_NTX,
-    FAUCETMENU, LANGUAGE, LANGUAGEMENU, LOCK, LOCK_COIN, LOCK_COIN_SCRIPT, LOCK_COIN_SCRIPT_TO,
-    LOCK_COIN_SCRIPT_TO_AMOUNT, LOCK_CONFRMATION, MAINMENU,
-    SETTINGSMENU, SPEND, SPEND_COIN, SPEND_COIN_TO, SPEND_COIN_TO_AMOUNT,
-    SPEND_COIN_TO_NTX, SWAPSMENU, STARTSTATE, UNITS, WALLET_PEERS, WALLETMENU, WHOAMIMENU = Value
-  }
-
-  object Texts extends Enumeration {
-    val ADD_AS_PAYEE, BROADCAST_CONTRACT_CONFIRM, BROADCAST_TX_CONFIRM, CREATE_CHANNEL_CONFIRM,
-    ENTER_SPEND_AMOUNT, HTLC_COUNTER_OFFER, HTLC_FILL, HTLC_REFUND, HTLC_SWEEP, INCOMING_TX, INCOMING_NTX, NEXT, OPEN_LINK, OUTGOING_TX,
-    PREV, TX_HASH, TX_SET_MEMO, SWAP_FILL, VALUE_SENT_TO_ME,
-    VALUE_SENT_FROM_ME, VIEW_CONTRACT = Value
-  }
-
-  object CollectionName extends Enumeration {
-    val LANGUAGE_COLLECTION = Value("Language")
-    val USER_HTLC = Value("HTLC")
-    val USER_META_COLLECTION = Value("Meta")
-    val USER_STATE_COLLECTION = Value("State")
-    val USER_PAYEE_COLLECTION = Value("Payee")
-  }
-
-  case class CatchError(val error: Errata.Value) extends Exception
+  case class CatchError(val error: Errors.Value) extends Exception
 
   case class SendPhotoCatch(val sendPhoto: SendPhoto) extends Exception
-
-
-  val translations: Map[(String, String), String] = Map(
-    // Commands
-    (CommandName.ADD_PAYEE.toString, "en") -> "➕ Add",
-    (CommandName.ADD_PAYEE.toString, "es") -> "➕ Agregar",
-    (CommandName.ADDRESSLIST.toString, "en") -> "\uD83D\uDCD6 Addressses",
-    (CommandName.ADDRESSLIST.toString, "es") -> "\uD83D\uDCD6 Direcciones",
-    //(CommandName.ACTIVE_SWAPS.toString, "en") -> "\uD83D\uDD02 Current swaps",
-    //(CommandName.ACTIVE_SWAPS.toString, "es") -> "\uD83D\uDD02 Permutas vigentes",
-    (CommandName.BACK.toString, "en") -> "\uD83D\uDD19 Back",
-    (CommandName.BACK.toString, "es") -> "\uD83D\uDD19 Atrás",
-    (CommandName.BROADCAST.toString, "en") -> "\uD83D\uDC4C Send",
-    (CommandName.BROADCAST.toString, "es") -> "\uD83D\uDC4C Enviar",
-    (CommandName.BORROW.toString, "en") -> "\uD83D\uDD16 Borrow",
-    (CommandName.BORROW.toString, "es") -> "\uD83D\uDD16 Pedir prestado",
-    (CommandName.CANCEL.toString, "en") -> "❌ Cancel",
-    (CommandName.CANCEL.toString, "es") -> "❌ Cancelar",
-    (CommandName.ENCODE.toString, "en") -> "\uD83D\uDCDD Encode",
-    (CommandName.ENCODE.toString, "es") -> "\uD83D\uDCDD Codificar",
-    (CommandName.ENGLISH_LANG.toString, "en") -> "\uD83C\uDDEC\uD83C\uDDE7 English",
-    (CommandName.ENGLISH_LANG.toString, "es") -> "\uD83C\uDDEC\uD83C\uDDE7 Inglés",
-    (CommandName.FAUCET.toString, "en") -> "\uD83D\uDEB0 Faucet",
-    (CommandName.FAUCET.toString, "es") -> "\uD83D\uDEB0 Grifo",
-    (CommandName.GET_PAYEE.toString, "en") -> "\uD83D\uDCD6 Addresses",
-    (CommandName.GET_PAYEE.toString, "es") -> "\uD83D\uDCD6 Direcciones",
-    (CommandName.HTLCLIST.toString, "en") -> "⏳ Contracts",
-    (CommandName.HTLCLIST.toString, "es") -> "⏳ Contratos",
-    (CommandName.INFO.toString, "en") -> "ℹ Info",
-    (CommandName.INFO.toString, "es") -> "ℹ Información",
-    (CommandName.LANGUAGE.toString, "en") -> "\uD83C\uDF10 Language",
-    (CommandName.LANGUAGE.toString, "es") -> "\uD83C\uDF10 Idioma",
-    (CommandName.LOAN.toString, "en") -> "\uD83D\uDCD6 Loan",
-    (CommandName.LOAN.toString, "es") -> "\uD83D\uDCD6 Prestar",
-    (CommandName.LOCK.toString, "en") -> "\uD83D\uDDDD Lock",
-    (CommandName.LOCK.toString, "es") -> "\uD83D\uDDDD Inmobilizar",
-    (CommandName.LOCK_SWAP.toString, "en") -> "\uD83D\uDD02 Atomic swap",
-    (CommandName.LOCK_SWAP.toString, "es") -> "\uD83D\uDD02 Permuta atómica",
-    (CommandName.PAYEES.toString, "en") -> "\uD83D\uDC64 Payees",
-    (CommandName.PAYEES.toString, "es") -> "\uD83D\uDC64 Beneficiarios",
-    (CommandName.PEERS.toString, "en") -> "\uD83D\uDC65 Peers",
-    (CommandName.PEERS.toString, "es") -> "\uD83D\uDC65 Pares",
-    (CommandName.RATE.toString, "en") -> "Rate",
-    (CommandName.RATE.toString, "es") -> "Calificar",
-    (CommandName.RESTORE.toString, "en") -> "\uD83D\uDCE6 Restore",
-    (CommandName.RESTORE.toString, "es") -> "\uD83D\uDCE6 Restaurar",
-    (CommandName.RESCAN.toString, "en") -> "♻ Rescan",
-    (CommandName.RESCAN.toString, "es") -> "♻ Sintonizar",
-    (CommandName.SEED.toString, "en") -> "\uD83E\uDD51 Seed",
-    (CommandName.SEED.toString, "es") -> "\uD83E\uDD51 Semilla",
-    //(CommandName.SWAPS.toString, "en") -> "\uD83D\uDD02 Swaps",
-    //(CommandName.SWAPS.toString, "es") -> "\uD83D\uDD02 Permutas",
-    (CommandName.SETTINGS.toString, "en") -> "\uD83D\uDD27 Settings",
-    (CommandName.SETTINGS.toString, "es") -> "\uD83D\uDD27 Ajustes",
-    (CommandName.SPANISH_LANG.toString, "en") -> "\uD83C\uDDEA\uD83C\uDDF8 Spanish",
-    (CommandName.SPANISH_LANG.toString, "es") -> "\uD83C\uDDEA\uD83C\uDDF8 Español",
-    (CommandName.SPEND.toString, "en") -> "▶ Spend",
-    (CommandName.SPEND.toString, "es") -> "▶ Gastar",
-    (CommandName.TRANSACTIONS.toString, "en") -> "\uD83D\uDD87 Transactions",
-    (CommandName.TRANSACTIONS.toString, "es") -> "\uD83D\uDD87 Transacciones",
-    (CommandName.VIEWSCRIPT.toString, "en") -> "\uD83D\uDCDD Script",
-    (CommandName.VIEWSCRIPT.toString, "es") -> "\uD83D\uDCDD Escrito",
-    (CommandName.WALLETS.toString, "en") -> "\uD83D\uDC5C Wallets",
-    (CommandName.WALLETS.toString, "es") -> "\uD83D\uDC5C Billeteras",
-    (CommandName.WHOAMI.toString, "en") -> "\uD83D\uDC7B Who am I", //👻
-    (CommandName.WHOAMI.toString, "es") -> "\uD83D\uDC7B Quién soy", //💻
-
-    // Errata
-    (Errata.NEEDS_START.toString, "en") -> "Click /start",
-    (Errata.NEEDS_START.toString, "es") -> "Haz /start",
-    (Errata.INVALID_COIN.toString, "en") -> "Pick one coin from the menu.",
-    (Errata.INVALID_COIN.toString, "es") -> "Escoge una moneda del menu.",
-    (Errata.INVALID_AMOUNT.toString, "en") -> "Send an amount like `0.1022 tBCH` or a percentage like `2.5%`",
-    (Errata.INVALID_AMOUNT.toString, "es") -> "Envia una cantidad como `0.22` o un porcentaje como `2.5%`",
-    (Errata.INVALID_RECIPIENT.toString, "en") -> "Enter a valid address or choose a contact ",
-    (Errata.INVALID_RECIPIENT.toString, "es") -> "Ingresa una direccion o escoge un contacto",
-    (Errata.MISSING_SPEND_COINS.toString, "en") -> s"To receive, click 🚰 Faucet",
-    (Errata.MISSING_SPEND_COINS.toString, "es") -> s"Para recibir, clic en 🚰 Grifo",
-
-    (Texts.ADD_AS_PAYEE.toString, "en") -> "➕ Add",
-    (Texts.ADD_AS_PAYEE.toString, "es") -> "➕ Agregar",
-    (Texts.CREATE_CHANNEL_CONFIRM.toString, "en") -> "Do you want to stablish a channel?",
-    (Texts.CREATE_CHANNEL_CONFIRM.toString, "es") -> "¿Querés establecer un canal?",
-    (Texts.BROADCAST_CONTRACT_CONFIRM.toString, "en") -> "Do you want to broadcast the contract?",
-    (Texts.BROADCAST_CONTRACT_CONFIRM.toString, "es") -> "¿Querés transmitir el contrato?",
-    (Texts.BROADCAST_TX_CONFIRM.toString, "en") -> "Do you want to broadcast the transaction?",
-    (Texts.BROADCAST_TX_CONFIRM.toString, "es") -> "¿Querés transmitir la transacción?",
-    (Texts.ENTER_SPEND_AMOUNT.toString, "en") -> "Enter spend amount:",
-    (Texts.ENTER_SPEND_AMOUNT.toString, "es") -> "Ingresa la cantidad a gastar:",
-    (Texts.HTLC_COUNTER_OFFER.toString, "en") -> "Negotiate",
-    (Texts.HTLC_COUNTER_OFFER.toString, "es") -> "Negociar",
-    (Texts.HTLC_FILL.toString, "en") -> "Fill",
-    (Texts.HTLC_FILL.toString, "es") -> "Llenar",
-    (Texts.HTLC_REFUND.toString, "en") -> "Refund",
-    (Texts.HTLC_REFUND.toString, "es") -> "Rembolsar",
-    (Texts.HTLC_SWEEP.toString, "en") -> "Sweep",
-    (Texts.HTLC_SWEEP.toString, "es") -> "Barrer",
-    (Texts.INCOMING_NTX.toString, "en") -> "🔔 Notification transaction",
-    (Texts.INCOMING_NTX.toString, "es") -> "🔔 Transacción de notificación",
-    (Texts.INCOMING_TX.toString, "en") -> "🔔 Incoming transaction",
-    (Texts.INCOMING_TX.toString, "es") -> "🔔 Transacción entrante",
-    (Texts.NEXT.toString, "en") -> "Next",
-    (Texts.NEXT.toString, "es") -> "Siguiente",
-    (Texts.OPEN_LINK.toString, "en") -> "Open", //Block explorer
-    (Texts.OPEN_LINK.toString, "es") -> "Abrir", //Explorar
-    (Texts.OUTGOING_TX.toString, "en") -> "🔔 Outgoing transaction",
-    (Texts.OUTGOING_TX.toString, "es") -> "🔔 Transacción saliente",
-    (Texts.PREV.toString, "en") -> "Prev",
-    (Texts.PREV.toString, "es") -> "Anterior",
-    (Texts.SWAP_FILL.toString, "en") -> "Fill Swap",
-    (Texts.SWAP_FILL.toString, "es") -> "Concretar Permuta",
-    (Texts.TX_HASH.toString, "en") -> "Hash",
-    (Texts.TX_HASH.toString, "es") -> "Hash",
-    (Texts.TX_SET_MEMO.toString, "en") -> "Set Memo",
-    (Texts.TX_SET_MEMO.toString, "es") -> "Poner Nota",
-    (Texts.VALUE_SENT_FROM_ME.toString, "en") -> "Value received",
-    (Texts.VALUE_SENT_FROM_ME.toString, "es") -> "Valor recibido",
-    (Texts.VALUE_SENT_TO_ME.toString, "en") -> "Value sent",
-    (Texts.VALUE_SENT_TO_ME.toString, "es") -> "Valor enviado",
-    (Texts.VIEW_CONTRACT.toString, "en") -> "View",
-    (Texts.VIEW_CONTRACT.toString, "es") -> "Ver"
-  )
-
-  object Errata extends Enumeration {
-    // are catched
-    val NEEDS_START = Value
-    val NEEDS_BIP47_CHANNEL = Value
-
-    // are rendered
-    val INVALID_COIN, INVALID_AMOUNT, INVALID_LANGUAGE,
-    INVALID_RECIPIENT, INSUFFICIENT_BALANCE = Value
-
-    val EMPTYFAUCET = Value("Faucet error: Not enough coins.")
-    val FAUCET_NEEDS_ADMIN = Value("Faucet error: Admin does not have wallets")
-    val MISSING_SPEND_COINS = Value
-
-    // state machine errors
-    val MISSING_META_COIN = Value("State machine error: Missing meta's coin. Please go to /start")
-    val MISSING_META_PAYEE = Value("State machine error: Missing meta's payee. Please go to /start")
-    val MISSING_META_AMOUNT = Value
-  }
-
-  import CollectionName._
-  import StateName._
-
+  
   //type Doc = org.mongodb.scala.bson.collection.Document
   type Who = Integer
   type Pubkey = Array[Byte]
   type UserWallets = mutable.Map[String, BIP47AppKit]
   type LimitSwap = (String, Float, Long, Sha256Hash)
   type HTLCFromTx = (NetworkParameters, BIP47AppKit, Transaction, TransactionOutput, Script)
-  type KeyboardI18NButton = (Texts.Value, Either[String, CallbackName.Value])
+  type KeyboardI18NButton = (Labels.Value, Either[String, Callbacks.Value])
 
   // hash, who swaps, who reunds, locktime
   type RedeemableSwap = (Sha256Hash, Pubkey, Pubkey, Long)
@@ -553,17 +384,17 @@ object Main {
 
   def db = futureConnection.flatMap(_.database(s"xcswaps_${run_env}"))
 
-  def col(s: CollectionName.Value) = db.map(_.collection(s.toString()))
+  def col(s: Collections.Value) = db.map(_.collection(s.toString()))
 
-  def get_collection_value(collection: CollectionName.Value, who: Who): Option[BSONValue] = {
+  def get_collection_value(collection: Collections.Value, who: Who): Option[BSONValue] = {
     get_collection_value(collection, who, None, None)
   }
 
-  def get_collection_value(collection: CollectionName.Value, who: Who, key: String): Option[BSONValue] = {
+  def get_collection_value(collection: Collections.Value, who: Who, key: String): Option[BSONValue] = {
     get_collection_value(collection, who, Some(key), None)
   }
 
-  def get_collection_doc_value(collection: CollectionName.Value, who: Who, data_key: String): Option[BSONDocument] = {
+  def get_collection_doc_value(collection: Collections.Value, who: Who, data_key: String): Option[BSONDocument] = {
     get_collection_value(collection, who, data_key = data_key) match {
       case Some(BSONDocument(e)) => {
         Some(BSONDocument(e))
@@ -572,7 +403,7 @@ object Main {
     }
   }
 
-  def get_collection_string_value(collection: CollectionName.Value,
+  def get_collection_string_value(collection: Collections.Value,
                                   who: Who, key: String, data_key: String = "data"): Option[String] = {
     get_collection_value(collection, who, Some(key), None, data_key = data_key) match {
       case Some(BSONString(s)) => Some(s)
@@ -580,7 +411,7 @@ object Main {
     }
   }
 
-  def get_collection_value(collection: CollectionName.Value,
+  def get_collection_value(collection: Collections.Value,
                            who: Who,
                            key: String,
                            fallback_value: BSONValue): Option[BSONValue] = {
@@ -591,7 +422,7 @@ object Main {
       Some(fallback_value))
   }
 
-  def get_collection_value(collection: CollectionName.Value,
+  def get_collection_value(collection: Collections.Value,
                            who: Who, doc_key: Option[String] = None,
                            fallback_value: Option[BSONValue] = None,
                            data_key: String = "data"
@@ -653,59 +484,59 @@ object Main {
     case _ => "\uD83D\uDC5C Wallets"
   }
 
-  def getAddPayeeCommand(lang: String) = translations(CommandName.ADD_PAYEE.toString, lang)
+  def getAddPayeeCommand(lang: String) = translations(Commands.ADD_PAYEE.toString, lang)
 
-  def getAddressListCommand(lang: String) = translations((CommandName.ADDRESSLIST.toString, lang))
+  def getAddressListCommand(lang: String) = translations((Commands.ADDRESSLIST.toString, lang))
 
   def getBackCommand(lang: String): String = "\uD83D\uDD19 Back" //❌\
-  def getBroadcastCommand(lang: String) = translations((CommandName.BROADCAST.toString, lang))
+  def getBroadcastCommand(lang: String) = translations((Commands.BROADCAST.toString, lang))
 
-  def getCancelCommand(lang: String) = translations((CommandName.CANCEL.toString, lang))
+  def getCancelCommand(lang: String) = translations((Commands.CANCEL.toString, lang))
 
-  def getFaucetCommand(lang: String) = translations((CommandName.FAUCET.toString, lang))
+  def getFaucetCommand(lang: String) = translations((Commands.FAUCET.toString, lang))
 
-  def getEncodeCommand(lang: String) = translations((CommandName.ENCODE.toString, lang))
+  def getEncodeCommand(lang: String) = translations((Commands.ENCODE.toString, lang))
 
-  def getEnglishLanguageCommand(lang: String) = translations((CommandName.ENGLISH_LANG.toString, lang))
+  def getEnglishLanguageCommand(lang: String) = translations((Commands.ENGLISH_LANG.toString, lang))
 
-  def getHTLCListCommand(lang: String) = translations((CommandName.HTLCLIST.toString, lang))
+  def getHTLCListCommand(lang: String) = translations((Commands.HTLCLIST.toString, lang))
 
-  def getInfoCommand(lang: String) = translations((CommandName.INFO.toString, lang))
+  def getInfoCommand(lang: String) = translations((Commands.INFO.toString, lang))
 
-  def getLanguageCommand(lang: String) = translations((CommandName.LANGUAGE.toString, lang))
+  def getLanguageCommand(lang: String) = translations((Commands.LANGUAGE.toString, lang))
 
-  def getLockCommand(lang: String) = translations((CommandName.LOCK.toString, lang))
+  def getLockCommand(lang: String) = translations((Commands.LOCK.toString, lang))
 
-  def getLockSwapCommand(lang: String) = translations((CommandName.LOCK_SWAP.toString, lang))
+  def getLockSwapCommand(lang: String) = translations((Commands.LOCK_SWAP.toString, lang))
 
-  def getLockLoanRequest(lang: String) = translations((CommandName.LOCK_LOAN.toString, lang))
+  def getLockLoanRequest(lang: String) = translations((Commands.LOCK_LOAN.toString, lang))
 
-  def getPayeesCommand(lang: String) = translations((CommandName.PAYEES.toString, lang))
+  def getPayeesCommand(lang: String) = translations((Commands.PAYEES.toString, lang))
 
-  def getPeersCommand(lang: String) = translations((CommandName.PEERS.toString, lang))
+  def getPeersCommand(lang: String) = translations((Commands.PEERS.toString, lang))
 
-  def getRateCommand(lang: String) = translations((CommandName.RATE.toString, lang))
+  def getRateCommand(lang: String) = translations((Commands.RATE.toString, lang))
 
-  def getRestoreCommand(lang: String) = translations((CommandName.RESTORE.toString, lang))
+  def getRestoreCommand(lang: String) = translations((Commands.RESTORE.toString, lang))
 
-  def getRescanCommand(lang: String) = translations((CommandName.RESCAN.toString, lang))
+  def getRescanCommand(lang: String) = translations((Commands.RESCAN.toString, lang))
 
-  def getSpanishLanguageCommand(lang: String) = translations((CommandName.SPANISH_LANG.toString, lang))
+  def getSpanishLanguageCommand(lang: String) = translations((Commands.SPANISH_LANG.toString, lang))
 
-  def getSeedCommand(lang: String) = translations((CommandName.SEED.toString, lang))
+  def getSeedCommand(lang: String) = translations((Commands.SEED.toString, lang))
 
-  //def getSwapsCommand(lang: String) = translations((CommandName.SWAPS.toString,lang))
-  def getSweepCommand(lang: String) = translations((CommandName.SWEEP.toString, lang))
+  //def getSwapsCommand(lang: String) = translations((Commands.SWAPS.toString,lang))
+  def getSweepCommand(lang: String) = translations((Commands.SWEEP.toString, lang))
 
-  def getSettingsCommand(lang: String) = translations((CommandName.SETTINGS.toString, lang))
+  def getSettingsCommand(lang: String) = translations((Commands.SETTINGS.toString, lang))
 
-  def getSpendCommand(lang: String) = translations((CommandName.SPEND.toString, lang))
+  def getSpendCommand(lang: String) = translations((Commands.SPEND.toString, lang))
 
-  def getTransactionsCommand(lang: String) = translations((CommandName.TRANSACTIONS.toString, lang))
+  def getTransactionsCommand(lang: String) = translations((Commands.TRANSACTIONS.toString, lang))
 
-  def getViewScriptCommand(lang: String) = translations((CommandName.VIEWSCRIPT.toString, lang))
+  def getViewScriptCommand(lang: String) = translations((Commands.VIEWSCRIPT.toString, lang))
 
-  def getWhoamiCommand(lang: String) = translations((CommandName.WHOAMI.toString, lang))
+  def getWhoamiCommand(lang: String) = translations((Commands.WHOAMI.toString, lang))
 
   // Notification: 🔔
   // Sign: 🖊"BCH" -> "https://blockchair.com/bitcoin-cash/transaction/TXHASH"
@@ -872,22 +703,22 @@ object Main {
     val channel = receiveAddr.flatMap(getBIP47TxChannel(_, kit, tx))
 
     var buttonRow: mutable.Buffer[KeyboardI18NButton] = mutable.Buffer(
-      (Texts.OPEN_LINK, Left(getTransactionLink(coin, tx))),
-      (Texts.TX_SET_MEMO, Right(CallbackName.SET_MEMO))
+      (Labels.OPEN_LINK, Left(getTransactionLink(coin, tx))),
+      (Labels.TX_SET_MEMO, Right(Callbacks.SET_MEMO))
     )
 
     var text = ""
     if (isNotificationTransaction) {
-      text += s"**${translations(Texts.INCOMING_NTX.toString, lang)}**"
+      text += s"**${translations(Labels.INCOMING_NTX.toString, lang)}**"
       text += s"\nSender's payment code: ${kit.getPaymentCodeInNotificationTransaction(tx)}"
-      buttonRow.append((Texts.ADD_AS_PAYEE, Right(CallbackName.ADD_SENDER_AS_PAYEE)))
+      buttonRow.append((Labels.ADD_AS_PAYEE, Right(Callbacks.ADD_SENDER_AS_PAYEE)))
     } else {
-      text += s"**${translations(Texts.INCOMING_TX.toString, lang)}**"
+      text += s"**${translations(Labels.INCOMING_TX.toString, lang)}**"
     }
 
-    text += s"\n${translations(Texts.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
-    text += s"\n${translations(Texts.VALUE_SENT_FROM_ME.toString, lang)}: ${formatAmount(tx.getValueSentFromMe(wallet), coin)}"
-    text += s"\n${translations(Texts.VALUE_SENT_TO_ME.toString, lang)}: ${formatAmount(tx.getValueSentToMe(wallet), coin)}"
+    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
+    text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: ${formatAmount(tx.getValueSentFromMe(wallet), coin)}"
+    text += s"\n${translations(Labels.VALUE_SENT_TO_ME.toString, lang)}: ${formatAmount(tx.getValueSentToMe(wallet), coin)}"
 
     if (channel.isDefined) {
 
@@ -918,7 +749,7 @@ object Main {
           "swap_payer" -> BSONString(kit.getPaymentCode)
         ))
 
-        buttonRow += ((Texts.HTLC_FILL, Right(CallbackName.SWAP_COUNTER_LOCK)))
+        buttonRow += ((Labels.HTLC_FILL, Right(Callbacks.SWAP_COUNTER_LOCK)))
       } else {
         println("Could not detect limit swap")
       }
@@ -935,9 +766,9 @@ object Main {
         USER_HTLC, ownerId, "swap_secret", data_key = s"${hash.toString}")
 
       if (false == secret_value.isDefined)
-        buttonRow += ((Texts.HTLC_FILL, Right(CallbackName.SWAP_COUNTER_LOCK)))
+        buttonRow += ((Labels.HTLC_FILL, Right(Callbacks.SWAP_COUNTER_LOCK)))
       else
-        buttonRow += ((Texts.HTLC_SWEEP, Right(CallbackName.HTLC_DO_SWEEP)))
+        buttonRow += ((Labels.HTLC_SWEEP, Right(Callbacks.HTLC_DO_SWEEP)))
     }
 
     // tx is incoming, because payer did sweep?
@@ -1122,14 +953,14 @@ object Main {
 
     println(s"Total : ${formatAmount(total, coin)}")
 
-    text += s"${translations((Texts.OUTGOING_TX.toString, lang))}"
-    text += s"\n${translations(Texts.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
-    text += s"\n${translations(Texts.VALUE_SENT_FROM_ME.toString, lang)}: " +
+    text += s"${translations((Labels.OUTGOING_TX.toString, lang))}"
+    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
+    text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: " +
       s"${formatAmount(tx.getValue(wallet), coin)}"
 
     val url = getTransactionLink(coin, tx)
-    val buttons = mutable.ListBuffer[(Texts.Value, Either[String, CallbackName.Value])](
-      (Texts.OPEN_LINK, Left(url))
+    val buttons = mutable.ListBuffer[(Labels.Value, Either[String, Callbacks.Value])](
+      (Labels.OPEN_LINK, Left(url))
     )
     val rows = List(buttons.toList)
     val keyboard = make_inline_keyboard(rows, lang)
@@ -1144,7 +975,7 @@ object Main {
   import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow
 
   def make_inline_keyboard
-  (buttonRows: List[List[(Texts.Value, Either[String, CallbackName.Value])]],
+  (buttonRows: List[List[(Labels.Value, Either[String, Callbacks.Value])]],
    lang: String): InlineKeyboardMarkup = {
 
     val markupInline = new InlineKeyboardMarkup
@@ -1268,7 +1099,7 @@ object Main {
     val adminExists = userDir(adminId).exists()
     val adminHasWallets = wallMap.contains(adminId)
     if (false == adminExists || false == adminHasWallets) {
-      throw new CatchError(Errata.FAUCET_NEEDS_ADMIN)
+      throw new CatchError(Errors.FAUCET_NEEDS_ADMIN)
     }
 
     val faucetCoins = mutable.Set[String]()
@@ -1406,7 +1237,7 @@ object Main {
   }
 
   def get_limit_swap_inline_keyboard(lang: String): InlineKeyboardMarkup = {
-    val opts = List((Texts.SWAP_FILL, Right(CallbackName.SWAP_LIMIT_FILL)))
+    val opts = List((Labels.SWAP_FILL, Right(Callbacks.SWAP_LIMIT_FILL)))
     val rows = List(opts)
     return make_inline_keyboard(rows, lang)
   }
@@ -1421,12 +1252,12 @@ object Main {
     if (total == 0)
       return make_inline_keyboard(List(), lang)
 
-    val openBtn = (Texts.OPEN_LINK, Left(url))
-    val sweepBtn = (Texts.HTLC_SWEEP, Right(CallbackName.HTLC_DO_SWEEP))
-    val refundBtn = (Texts.HTLC_REFUND, Right(CallbackName.HTLC_DO_REFUND))
-    val viewBtn = (Texts.VIEW_CONTRACT, Right(CallbackName.VIEW_HTLC))
-    val nextBtn = (Texts.NEXT, Right(CallbackName.NEXT_HTLC))
-    val prevBtn = (Texts.PREV, Right(CallbackName.PREV_HTLC))
+    val openBtn = (Labels.OPEN_LINK, Left(url))
+    val sweepBtn = (Labels.HTLC_SWEEP, Right(Callbacks.HTLC_DO_SWEEP))
+    val refundBtn = (Labels.HTLC_REFUND, Right(Callbacks.HTLC_DO_REFUND))
+    val viewBtn = (Labels.VIEW_CONTRACT, Right(Callbacks.VIEW_HTLC))
+    val nextBtn = (Labels.NEXT, Right(Callbacks.NEXT_HTLC))
+    val prevBtn = (Labels.PREV, Right(Callbacks.PREV_HTLC))
 
     val opts =
       if (current == 0)
@@ -1522,17 +1353,17 @@ object Main {
 
   def get_meta_long(m: Message, key: String): Option[Long] = get_meta_long(m.getFrom.getId, key)
 
-  def get_state(who: Who): StateName.Value = {
+  def get_state(who: Who): States.Value = {
     //import reactivemongo.bson.Macros
     val st: BSONValue = get_collection_value(USER_STATE_COLLECTION, who, "state", BSONString(STARTSTATE.toString())).get
     st match {
-      case BSONString(value) => StateName.withName(value)
+      case BSONString(value) => States.withName(value)
       case _ => throw new Exception()
     }
 
   }
 
-  def save_db(collection: CollectionName.Value, who: Who, key: String, data: BSONValue): Unit = {
+  def save_db(collection: Collections.Value, who: Who, key: String, data: BSONValue): Unit = {
     val selector = BSONDocument("who" -> BSONInteger(who)) //document("who" -> who)
     val modifier = BSONDocument("$set" -> BSONDocument(key -> data))
     val upsert: Future[reactivemongo.api.commands.UpdateWriteResult] = col(collection)
@@ -1540,7 +1371,7 @@ object Main {
     val res = Await.ready(upsert, 2 seconds)
   }
 
-  def insert_db(collection: CollectionName.Value, who: Who, key: String, data: BSONValue): Unit = {
+  def insert_db(collection: Collections.Value, who: Who, key: String, data: BSONValue): Unit = {
     val selector = BSONDocument("who" -> BSONInteger(who)) //document("who" -> who)
     val modifier = BSONDocument("$push" -> BSONDocument(key -> data))
     val upsert: Future[reactivemongo.api.commands.UpdateWriteResult] = col(collection)
@@ -1556,7 +1387,7 @@ object Main {
   def clean_meta(m: Message) =
     save_db(USER_META_COLLECTION, m.getFrom.getId, "data", document())
 
-  def save_state(m: Message, state: StateName.Value): Unit = {
+  def save_state(m: Message, state: States.Value): Unit = {
     val who = m.getFrom.getId
     println(s"Saving state of ${who} to ${state.toString()}")
     val v: BSONDocument = document("state" -> state.toString) //Document("state" -> state.toString()
@@ -1583,7 +1414,7 @@ object Main {
 
     assert(update.hasCallbackQuery)
     val query = update.getCallbackQuery
-    val callbackCmd = CallbackName.withName(query.getData)
+    val callbackCmd = Callbacks.withName(query.getData)
     println(s"Callback: ${callbackCmd}")
     val message = query.getMessage
 
@@ -1599,7 +1430,7 @@ object Main {
     val wallets = wallMap.getOrElse(
       ownerId, mutable.Map()).values.toList
 
-    val txPattern = s".*${translations(Texts.TX_HASH.toString, lang).toLowerCase}: ([A-Za-z0-9]+) ?.*".r
+    val txPattern = s".*${translations(Labels.TX_HASH.toString, lang).toLowerCase}: ([A-Za-z0-9]+) ?.*".r
     val normalizedText = currentText.toLowerCase.replace("\n", " ")
 
     val maybeHTLCTx: Option[HTLCFromTx] = normalizedText match {
@@ -1621,15 +1452,15 @@ object Main {
     }
 
     callbackCmd match {
-      case CallbackName.SWAP_LIMIT_FILL => {
+      case Callbacks.SWAP_LIMIT_FILL => {
 
       }
 
-      case CallbackName.OPEN_TX_LINK => {
+      case Callbacks.OPEN_TX_LINK => {
         println("Clicked OPEN TX LINK")
       }
 
-      case CallbackName.HTLC_DO_REFUND => maybeHTLCTx match {
+      case Callbacks.HTLC_DO_REFUND => maybeHTLCTx match {
 
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, tx, utxo, htlc)) => {
@@ -1688,7 +1519,7 @@ object Main {
         }
       }
 
-      case CallbackName.VIEW_HTLC => maybeHTLCTx match {
+      case Callbacks.VIEW_HTLC => maybeHTLCTx match {
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, tx, utxo, htlc)) => {
           val text = utxo.getScriptPubKey.toString
@@ -1697,8 +1528,8 @@ object Main {
         }
       }
 
-      case CallbackName.NEXT_HTLC
-           | CallbackName.PREV_HTLC => maybeHTLCTx match {
+      case Callbacks.NEXT_HTLC
+           | Callbacks.PREV_HTLC => maybeHTLCTx match {
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, tx, utxo, htlc)) => {
 
@@ -1706,7 +1537,7 @@ object Main {
           val currentIndex = htlcList
             .map(_.getHashAsString).indexWhere(_.startsWith(tx.getHashAsString))
 
-          val nextIndex = if (callbackCmd.equals(CallbackName.PREV_HTLC))
+          val nextIndex = if (callbackCmd.equals(Callbacks.PREV_HTLC))
             currentIndex - 1 else currentIndex + 1
 
           val next = htlcList(nextIndex)
@@ -1722,7 +1553,7 @@ object Main {
 
       // Someone locked funds for us (tx is a redeemable swap)
       // Lock our funds for them (send them a reedemable swap).
-      case CallbackName.SWAP_COUNTER_LOCK => maybeHTLCTx match {
+      case Callbacks.SWAP_COUNTER_LOCK => maybeHTLCTx match {
         case None => println("WARN: No htlc tx")
         case Some((ps, payeeHaswallet, tx, utxo, htlc)) => {
           println(s"Found tx: ${tx.getHashAsString}")
@@ -1798,7 +1629,7 @@ object Main {
 
       // The generator of the secret decides to sweep
       // Sweep, i.e. spend the tx locked by the counter party using our secret
-      case CallbackName.HTLC_DO_SWEEP => maybeHTLCTx match {
+      case Callbacks.HTLC_DO_SWEEP => maybeHTLCTx match {
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, htlcTx, utxo, htlc)) => {
           // get redeemable swap
@@ -1896,23 +1727,23 @@ object Main {
       case SendPhotoCatch(sendPhoto) => {
         bot.execute(sendPhoto)
       }
-      case CatchError(Errata.MISSING_SPEND_COINS) => {
+      case CatchError(Errors.MISSING_SPEND_COINS) => {
         val lang = get_language(m)
-        val text = translations((Errata.MISSING_SPEND_COINS.toString, lang))
+        val text = translations((Errors.MISSING_SPEND_COINS.toString, lang))
         val keyboard = make_options_keyboard(List(getFaucetCommand(lang), getBackCommand(lang)), 2)
         val msg = sendChooseOptionMessage(m, keyboard, lang, text)
         bot.execute[Message, BotApiMethod[Message]](msg)
       }
       case o@CatchError(error) => {
 
-        if (error == Errata.NEEDS_BIP47_CHANNEL) {
+        if (error == Errors.NEEDS_BIP47_CHANNEL) {
           val (coin, kit) =
             validate_coin(m, get_meta_string(m, "coin"))
 
           val payee_address = get_meta_string(m, "payee_address")
           val payee_code = new BIP47PaymentCode(payee_address.get)
 
-          save_state(m, StateName.BROADCAST_PAYEE_NTX)
+          save_state(m, States.BROADCAST_PAYEE_NTX)
 
           val ntx = kit.makeNotificationTransaction(payee_address.get)
           val tx = ntx.tx
@@ -1937,7 +1768,7 @@ object Main {
           //tx.getValueSentFromMe(wall).add(tx.getFee).minus(tx.getValueSentToMe(wall))
 
           var text = ""
-          text += translations((Texts.CREATE_CHANNEL_CONFIRM.toString, lang))
+          text += translations((Labels.CREATE_CHANNEL_CONFIRM.toString, lang))
           text += s"\n${formatAmount(kit.getParams.getMinNonDustOutput, coin)} to ${notificationAddress.toString}" +
             s"\n------------------------" +
             s"\n${formatAmount(tx.getFee, coin)} as transaction fee" +
@@ -2107,7 +1938,7 @@ object Main {
         if (keyboard.getKeyboard.size() < 2) {
           save_state(m, FAUCETMENU)
         } else
-          throw new CatchError(Errata.EMPTYFAUCET)
+          throw new CatchError(Errors.EMPTYFAUCET)
       }
 
       case `cancelCmd` => get_state(m.getFrom.getId) match {
@@ -2179,7 +2010,7 @@ object Main {
           try {
             validate_payee(m, get_meta_string(m, "payee_address"))
           } catch {
-            case e@CatchError(Errata.NEEDS_BIP47_CHANNEL) => {
+            case e@CatchError(Errors.NEEDS_BIP47_CHANNEL) => {
               val (coin, kit) = validate_coin(m, get_meta_string(m, "coin"))
               val payee_address = get_meta_string(m, "payee_address")
               (payee_address.get, true, coin, kit)
@@ -2283,7 +2114,7 @@ object Main {
     bot.execute[Message, BotApiMethod[Message]](msg)
   }
 
-  def replyError(m: Message, e: Errata.Value, lang: String): SendMessage = {
+  def replyError(m: Message, e: Errors.Value, lang: String): SendMessage = {
     println(s"Replying with error: ${e.toString}")
     replyTextMessage(m, e.toString())
   }
@@ -2311,16 +2142,16 @@ object Main {
 
   // validation functions
   def validate_coin(m: Message, s: Option[String]): (String, BIP47AppKit) =
-    s.fold(throw new CatchError(Errata.MISSING_META_COIN))(coin => {
+    s.fold(throw new CatchError(Errors.MISSING_META_COIN))(coin => {
 
       println(s"Validating coin: ${coin}")
 
       if (false == wallMap.contains(m.getFrom.getId))
-        throw new CatchError(Errata.NEEDS_START)
+        throw new CatchError(Errors.NEEDS_START)
 
       if (false == wallMap(m.getFrom.getId).contains(coin)) {
         println(s"Invalid coin: ${coin}")
-        throw new CatchError(Errata.INVALID_COIN)
+        throw new CatchError(Errors.INVALID_COIN)
       } else {
         save_meta(m, "coin", BSONString(coin))
         (coin, wallMap(m.getFrom.getId)(coin))
@@ -2332,7 +2163,7 @@ object Main {
                      s: Option[String],
                      replaceBip47Addr: Boolean = true
                     ): (String, Boolean, String, BIP47AppKit) =
-    s.fold(throw new CatchError(Errata.MISSING_META_PAYEE))(address_text => {
+    s.fold(throw new CatchError(Errors.MISSING_META_PAYEE))(address_text => {
       println(s"Validating payee: ${address_text}")
       val (coin, kit) = validate_coin(m, get_meta_string(m, "coin"))
       var isBip47Payment = false
@@ -2368,7 +2199,7 @@ object Main {
 
           if (channel == null || false == channel.isNotificationTransactionSent) {
             save_meta(m, "payee_address", BSONString(payee_address))
-            throw new CatchError(Errata.NEEDS_BIP47_CHANNEL)
+            throw new CatchError(Errors.NEEDS_BIP47_CHANNEL)
           } else {
             println(s"Channel is ready. Replacing bip 47 address? ${replaceBip47Addr}")
 
@@ -2401,7 +2232,7 @@ object Main {
                            s: Option[String],
                            r: Boolean = true
                           ): (Coin, String, Boolean, String, BIP47AppKit) =
-    s.fold(throw new CatchError(Errata.MISSING_META_AMOUNT))(amount_text => {
+    s.fold(throw new CatchError(Errors.MISSING_META_AMOUNT))(amount_text => {
 
       println(s"Validating send amount: ${amount_text} ...")
       val (payee_address, isbip47, coin, kit) =
@@ -2427,7 +2258,7 @@ object Main {
                   spendAmount = spendAmount.minus(e.missing)
 
                   if (spendAmount.isNegative)
-                    throw new CatchError(Errata.INSUFFICIENT_BALANCE)
+                    throw new CatchError(Errors.INSUFFICIENT_BALANCE)
                   println("Should work")
                 }
               }
@@ -2441,12 +2272,12 @@ object Main {
       } catch {
         case e: Exception => {
           println(s"${e.toString}. Failed to process message: " + e.getStackTraceString)
-          throw CatchError(Errata.INVALID_AMOUNT)
+          throw CatchError(Errors.INVALID_AMOUNT)
         }
       }
 
       if (spendAmount.isGreaterThan(kit.getBalance)) {
-        throw new CatchError(Errata.INVALID_AMOUNT)
+        throw new CatchError(Errors.INVALID_AMOUNT)
       }
 
       save_meta(m, "amount", BSONLong(spendAmount.value))
@@ -2454,7 +2285,7 @@ object Main {
     })
 
   // Blockhain menu => next_state
-  def sendChooseCoinMessage(m: Message, next_state: StateName.Value,
+  def sendChooseCoinMessage(m: Message, next_state: States.Value,
                             hint_text: String,
                             replyKeyboard: ReplyKeyboard, lang: String): SendMessage = {
 
@@ -2525,14 +2356,14 @@ object Main {
           tx = kit.createSend(addr, spendAmount.value)
         } catch {
           case e: InsufficientMoneyException => {
-            return replyError(m, Errata.INSUFFICIENT_BALANCE, lang)
+            return replyError(m, Errors.INSUFFICIENT_BALANCE, lang)
           }
         }
 
         val total = tx.getValueSentFromMe(wall)
         var text = ""
 
-        text += s"\n${translations((Texts.BROADCAST_TX_CONFIRM.toString, lang))}"
+        text += s"\n${translations((Labels.BROADCAST_TX_CONFIRM.toString, lang))}"
         text += s"\n**${formatAmount(spendAmount, coin)}** to ${payee_address}" +
           s"\n------------------------" +
           s"\n${formatAmount(tx.getFee, coin)} as transaction fee" +
@@ -2560,7 +2391,7 @@ object Main {
 
         val wallet = wallMap(m.getFrom.getId)(coin)
         if (false == wallet.isValidAddress(payee_address))
-          throw new CatchError(Errata.INVALID_RECIPIENT)
+          throw new CatchError(Errors.INVALID_RECIPIENT)
 
         var addr: Address = Address.fromString(wallet.getParams, payee_address)
         val wall = wallet.getvWallet()
@@ -2798,7 +2629,7 @@ object Main {
 
         val wallet = wallMap(m.getFrom.getId)(coin)
         if (false == wallet.isValidAddress(payee_address))
-          throw new CatchError(Errata.INVALID_RECIPIENT)
+          throw new CatchError(Errors.INVALID_RECIPIENT)
 
         var p2shAddress: Address = Address.fromString(wallet.getParams, script_address.get)
         val wall = wallet.getvWallet()
@@ -2862,7 +2693,7 @@ object Main {
 
   def messageOnNewPayee(m: Message, lang: String): SendMessage = if (m.hasText) {
     // expect next_state
-    val next_state = StateName.withName(get_meta_string(m, "next_state").get)
+    val next_state = States.withName(get_meta_string(m, "next_state").get)
 
     val state = get_state(m.getFrom.getId)
     state match {
@@ -2877,7 +2708,7 @@ object Main {
           save_state(m, ADD_NEW_PAYEE_ADDRESS)
           sendChooseOptionMessage(m, get_back_menu_keyboard(lang), lang, text)
         } else
-          replyError(m, Errata.INVALID_RECIPIENT, lang)
+          replyError(m, Errors.INVALID_RECIPIENT, lang)
         //replyTextMessage(m, address)
       }
       case ADD_NEW_PAYEE_ADDRESS => {
@@ -2975,7 +2806,7 @@ object Main {
     val fundedByPayee = wallet.getvWallet().hasKey(payeeKey)
 
     var txt = s"HTLC (${i + 1} of ${n})."
-    txt += s"\n${translations(Texts.TX_HASH.toString, lang)}: ${htlc.getHashAsString}"
+    txt += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${htlc.getHashAsString}"
 
     htlc.getConfidence.getConfidenceType match {
       case TransactionConfidence.ConfidenceType.BUILDING => {
@@ -3018,7 +2849,7 @@ object Main {
         val keyboard = get_spend_coin_menu_keyboard(m.getFrom.getId, lang)
         if (spendable_coins(m.getFrom.getId).size > 0)
           sendChooseOptionMessage(m, keyboard, lang)
-        else throw new CatchError(Errata.MISSING_SPEND_COINS)
+        else throw new CatchError(Errors.MISSING_SPEND_COINS)
       }
 
       case `lockCmd` => {
@@ -3213,7 +3044,7 @@ object Main {
         val keyboard = get_spend_coin_menu_keyboard(m.getFrom.getId, lang)
         if (spendable_coins(m.getFrom.getId).size > 0)
           sendChooseOptionMessage(m, keyboard, lang)
-        else throw new CatchError(Errata.MISSING_SPEND_COINS)
+        else throw new CatchError(Errors.MISSING_SPEND_COINS)
       }
 
       case `lockCmd` => {
@@ -3279,7 +3110,7 @@ object Main {
         replyTextMessage(m, text)
       }
       case `langCmd` => {
-        save_state(m, StateName.LANGUAGEMENU)
+        save_state(m, States.LANGUAGEMENU)
         val keyboard = get_language_menu_keyboard(lang)
         sendChooseOptionMessage(m, keyboard, lang)
       }
@@ -3298,7 +3129,7 @@ object Main {
       case `enLang` => {
         set_language(m.getFrom.getId, "en")
       }
-      case _ => throw new CatchError(Errata.INVALID_LANGUAGE)
+      case _ => throw new CatchError(Errors.INVALID_LANGUAGE)
     }
     val new_lang = get_language(m)
     save_state(m, MAINMENU)
@@ -3345,7 +3176,7 @@ object Main {
     val langs = List("en", "es")
     // validate translations
     for (l <- langs) {
-      for (t <- Texts.values) {
+      for (t <- Labels.values) {
         val exists = translations.contains((t.toString, l))
         assert(exists, s"Text translation missing: ${t.toString}, ${l}")
       }

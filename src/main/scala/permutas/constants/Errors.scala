@@ -1,5 +1,12 @@
 package permutas.constants
 
+package object CheckedExceptions {
+  import org.telegram.telegrambots.meta.api.methods.send.SendPhoto
+
+  case class CatchError(val error: Errors.Value) extends Exception
+  case class SendPhotoCatch(val sendPhoto: SendPhoto) extends Exception
+}
+
 object Errors extends Enumeration {
   // are catched
   val NEEDS_START = Value

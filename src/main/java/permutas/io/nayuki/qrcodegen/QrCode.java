@@ -21,7 +21,7 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package permutas.io.nayuki.qrcodegen;
 
 import java.awt.image.BufferedImage;
 import java.util.Arrays;

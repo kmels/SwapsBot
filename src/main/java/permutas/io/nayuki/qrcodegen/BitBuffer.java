@@ -21,7 +21,7 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package permutas.io.nayuki.qrcodegen;
 
 import java.util.BitSet;
 import java.util.Objects;

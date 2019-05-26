@@ -21,7 +21,7 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package permutas.io.nayuki.qrcodegen;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

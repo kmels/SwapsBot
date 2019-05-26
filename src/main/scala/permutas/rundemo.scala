@@ -1,7 +1,14 @@
 package permutas
 
-import permutas.constants._
-import permutas.i18n.translations
+import constants._
+
+import reactivemongo.api.{Cursor, DefaultDB, MongoConnection, MongoDriver}
+import reactivemongo.bson.{BSONDocumentReader, BSONDocumentWriter, Macros, document}
+import reactivemongo.bson.BSONDocument
+import reactivemongo.bson._
+import reactivemongo.api.collections.bson.BSONCollection
+
+import i18n.translations
 
 import java.io.{File, Serializable}
 import java.math.BigInteger
@@ -11,7 +18,7 @@ import java.util.Date
 
 import Main._
 import com.google.common.net.InetAddresses
-import io.nayuki.qrcodegen.QrCode
+
 import org.bitcoinj.core._
 import org.bitcoinj.core.bip47.{BIP47Account, BIP47Channel, BIP47PaymentCode}
 import org.bitcoinj.kits.BIP47AppKit
@@ -29,16 +36,10 @@ import scala.collection.JavaConverters._
 import scala.collection.JavaConversions._
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
-import reactivemongo.api.{Cursor, DefaultDB, MongoConnection, MongoDriver}
-import reactivemongo.bson.{BSONDocumentReader, BSONDocumentWriter, Macros, document}
-import reactivemongo.bson.BSONDocument
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.{InlineKeyboardMarkup, ReplyKeyboardMarkup}
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException
 
 import scala.concurrent.Future
-import reactivemongo.bson._
-import reactivemongo.api.collections.bson.BSONCollection
-
 import mutable.ListBuffer
 import scala.concurrent.duration._
 import scala.concurrent._
@@ -98,68 +99,6 @@ import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageTe
 // viernes 20
 // TODO: Restaurar desde semilla
 // TODO: Navegacion en lista de direcciones
-
-object SwapUtils {
-  val REFUND_TIME_NEEDED = 2; //24*60 //2;
-
-  def maybeLimitSwap(data: Array[Byte]): Option[LimitSwap] = {
-    if (data.size != 48)
-      return None
-
-    val coinBytes = data.take(4)
-    val coinStartByte = if (coinBytes(0) == '-'.toByte) 1 else 0
-    val wantCoin = new String(coinBytes.drop(coinStartByte))
-    var tail = data.drop(4)
-
-    val priceBytes = tail.take(4)
-    val priceBuff = java.nio.ByteBuffer.wrap(priceBytes)
-    tail = tail.drop(4)
-
-    val locktimeBytes = tail.take(8)
-    val locktimeBuff = java.nio.ByteBuffer.wrap(locktimeBytes)
-    tail = tail.drop(8)
-
-    val secretHash = new Sha256Hash(tail.take(32))
-    tail = tail.drop(32)
-
-    assert(tail.size == 0, "Tail is size: ${tail.size}, should be 0!")
-    return Some(wantCoin, priceBuff.getFloat, locktimeBuff.getLong, secretHash)
-  }
-
-  def maybeRedeemableSwap(script: Script): Option[RedeemableSwap] = {
-    val chunks = script.getChunks
-    if (chunks.size() != 13)
-      return None
-    if (!chunks.get(0).equalsOpCode(OP_IF))
-      return None
-    if (!chunks.get(1).equalsOpCode(OP_SHA256))
-      return None
-    if (!chunks.get(2).isPushData)
-      return None
-    val hash: Sha256Hash = new Sha256Hash(chunks.get(2).data)
-    if (!chunks.get(4).isPushData)
-      return None
-    if (!chunks.get(7).isPushData) {
-      return None
-    }
-    var locktimeBytes = chunks.get(7).data
-    var locktime: BigInteger = BigInteger.ZERO
-    if (locktimeBytes == null) {
-      val word = chunks.get(7).opcode
-      if (word >= 82 && word <= 96)
-        locktime = BigInteger.valueOf(word - 80)
-      else if (locktimeBytes == null)
-        return None
-    } else {
-      locktime = Utils.decodeMPI(Utils.reverseBytes(locktimeBytes), false)
-    }
-    val swapPubkey = chunks.get(4).data
-    if (!chunks.get(10).isPushData)
-      return None;
-    val refundPubkey = chunks.get(10).data
-    Some(hash, swapPubkey, refundPubkey, locktime.longValue())
-  }
-}
 
 class Swap(params: NetworkParameters) {
   type Secret = Array[Byte]
@@ -280,8 +219,23 @@ class Swap(params: NetworkParameters) {
 
 object Main {
 
+  import permutas.MongoDb._
+  import permutas.constants._
   import Collections._
   import States._
+  import Types._
+  import CheckedExceptions._
+
+  import permutas.io._
+  import Pretty._
+  import Reply._
+  import menus._
+
+  import MenuUtils._
+  import Start._
+
+  import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard
+  import org.telegram.telegrambots.meta.api.methods.send.SendMessage
 
   /*
    * Wallets
@@ -345,21 +299,12 @@ object Main {
   val adminId = 111720349
   val faucetCoin = Coin.valueOf(0, 2)
 
-  case class CatchError(val error: Errors.Value) extends Exception
-
-  case class SendPhotoCatch(val sendPhoto: SendPhoto) extends Exception
-  
   //type Doc = org.mongodb.scala.bson.collection.Document
-  type Who = Integer
-  type Pubkey = Array[Byte]
-  type UserWallets = mutable.Map[String, BIP47AppKit]
-  type LimitSwap = (String, Float, Long, Sha256Hash)
-  type HTLCFromTx = (NetworkParameters, BIP47AppKit, Transaction, TransactionOutput, Script)
-  type KeyboardI18NButton = (Labels.Value, Either[String, Callbacks.Value])
+
 
   // hash, who swaps, who reunds, locktime
-  type RedeemableSwap = (Sha256Hash, Pubkey, Pubkey, Long)
-  val wallMap: mutable.Map[Int, mutable.Map[String, BIP47AppKit]] = mutable.Map()
+  implicit val wm: WallMap = mutable.Map()
+
   val networks: Map[String, NetworkParameters] = Map(
     "BSV" -> new BSVMainNetParams(),
     "BCH" -> new BCCMainNetParams(),
@@ -369,124 +314,10 @@ object Main {
   )
 
 
-  /** ****
-    * BEGIN DATABASE LAYER
-    * ******/
 
-  val mongoUri = "mongodb://localhost:27018" ///xcswaps_dev"
-  import ExecutionContext.Implicits.global
 
-  val driver = MongoDriver()
-  val parsedUri = MongoConnection.parseURI(mongoUri)
-  val connection = parsedUri.map(driver.connection(_))
-
-  val futureConnection = Future.fromTry(connection)
-
-  def db = futureConnection.flatMap(_.database(s"xcswaps_${run_env}"))
-
-  def col(s: Collections.Value) = db.map(_.collection(s.toString()))
-
-  def get_collection_value(collection: Collections.Value, who: Who): Option[BSONValue] = {
-    get_collection_value(collection, who, None, None)
-  }
-
-  def get_collection_value(collection: Collections.Value, who: Who, key: String): Option[BSONValue] = {
-    get_collection_value(collection, who, Some(key), None)
-  }
-
-  def get_collection_doc_value(collection: Collections.Value, who: Who, data_key: String): Option[BSONDocument] = {
-    get_collection_value(collection, who, data_key = data_key) match {
-      case Some(BSONDocument(e)) => {
-        Some(BSONDocument(e))
-      }
-      case _ => None
-    }
-  }
-
-  def get_collection_string_value(collection: Collections.Value,
-                                  who: Who, key: String, data_key: String = "data"): Option[String] = {
-    get_collection_value(collection, who, Some(key), None, data_key = data_key) match {
-      case Some(BSONString(s)) => Some(s)
-      case _ => None
-    }
-  }
-
-  def get_collection_value(collection: Collections.Value,
-                           who: Who,
-                           key: String,
-                           fallback_value: BSONValue): Option[BSONValue] = {
-    get_collection_value(
-      collection,
-      who,
-      if (key.isEmpty) None else Some(key),
-      Some(fallback_value))
-  }
-
-  def get_collection_value(collection: Collections.Value,
-                           who: Who, doc_key: Option[String] = None,
-                           fallback_value: Option[BSONValue] = None,
-                           data_key: String = "data"
-                          ): Option[BSONValue] = {
-
-    // Accept key "data.key" instead of just "key" and a hardcoded data
-    var ret: BSONDocument = null
-    val query = BSONDocument("who" -> BSONInteger(who))
-    val doc: Future[Option[BSONDocument]] = col(collection).flatMap(_.find(query).one[BSONDocument])
-
-    val it: Option[BSONDocument] = Await.result(doc, 2 seconds)
-
-    val transformed: Option[BSONValue] = it.flatMap(bson => {
-
-      val (dataOpt, key): (Option[BSONValue], Option[String]) =
-        if (data_key.contains(".") && false == bson.contains(data_key)) {
-          val docOpt = bson.get(data_key.takeWhile(_ != '.'))
-          val dockey = Some(data_key.dropWhile(_ != '.').tail)
-          (docOpt, dockey)
-        }
-        else {
-          (bson.get(data_key), doc_key)
-        }
-
-      if (false == dataOpt.isDefined) {
-        println(s"${who} Did not find data_key=${data_key} and key=${key}")
-        return None
-      }
-      val bsondata = dataOpt.get
-
-      bsondata match {
-        case data: BSONDocument =>
-          if (key.isDefined && data.contains(key.get)) {
-            val ret = Some(data.get(key.get).get)
-            ret
-          } else {
-            Some(data)
-          }
-        case arr: BSONArray => Some(arr)
-        case t => {
-          println(s"WARN: Unexpected get_collection_value: ${t} ")
-          None
-        }
-      }
-    })
-
-    transformed.fold(fallback_value)(x => Some(x))
-  }
-
-  /** ****
-    * END DATABASE LAYER
-    * ******/
-
-  def getHelpMessage(lang: String): String = ""
-
-  def getWalletsCommand(lang: String): String = lang match {
-    case "es" => "\uD83D\uDC5C Billeteras"
-    case "en" => "\uD83D\uDC5C Wallets"
-    case _ => "\uD83D\uDC5C Wallets"
-  }
-
-  def getAddPayeeCommand(lang: String) = translations(Commands.ADD_PAYEE.toString, lang)
-
-  def getAddressListCommand(lang: String) = translations((Commands.ADDRESSLIST.toString, lang))
+  def getCommand(command: Commands.Value, lang:String) =
+    translations((command.toString, lang))
 
   def getBackCommand(lang: String): String = "\uD83D\uDD19 Back" //❌\
   def getBroadcastCommand(lang: String) = translations((Commands.BROADCAST.toString, lang))
@@ -499,15 +330,11 @@ object Main {
 
   def getEnglishLanguageCommand(lang: String) = translations((Commands.ENGLISH_LANG.toString, lang))
 
-  def getHTLCListCommand(lang: String) = translations((Commands.HTLCLIST.toString, lang))
-
   def getInfoCommand(lang: String) = translations((Commands.INFO.toString, lang))
 
   def getLanguageCommand(lang: String) = translations((Commands.LANGUAGE.toString, lang))
 
   def getLockCommand(lang: String) = translations((Commands.LOCK.toString, lang))
-
-  def getLockSwapCommand(lang: String) = translations((Commands.LOCK_SWAP.toString, lang))
 
   def getLockLoanRequest(lang: String) = translations((Commands.LOCK_LOAN.toString, lang))
 
@@ -541,24 +368,6 @@ object Main {
   // Notification: 🔔
   // Sign: 🖊"BCH" -> "https://blockchair.com/bitcoin-cash/transaction/TXHASH"
   // Balance: ⚖️
-
-  def getTransactionLink(coin: String, tx: Transaction): String = {
-    val baseurl = Map(
-      "BSV" -> "https://blockchair.com/bitcoin-sv/transaction/TXHASH",
-      "tBCH" -> "https://explorer.bitcoin.com/tbch-schnorr/tx/TXHASH",
-      //"tBCH" -> "https://explorer.bitcoin.com/tbch/tx/TXHASH",
-      "BCH" -> "https://explorer.bitcoin.com/bch/tx/TXHASH",
-      "BTC" -> "https://bitaps.com/TXHASH",
-      //"https://blockchair.com/bitcoin/transaction/TXHASH",
-      "tBTC" -> "https://tbtc.bitaps.com/TXHASH"
-      //"https://live.blockcypher.com/btc-testnet/tx/TXHASH"
-    )
-    val defaulturl = s"https://blockchair.com/bitcoin-sv/transaction/TXHASH"
-    baseurl.get(coin)
-      .getOrElse(defaulturl)
-      .replace("TXHASH", tx.getHashAsString)
-    //s"[${tx.getHashAsString.take(6)}](${url})"
-  }
 
   def getEnterAddressAsk(lang: String): String = "Enter payee's address, "
 
@@ -631,7 +440,7 @@ object Main {
     new BIP47Account(kit.getParams, channel.getPaymentCode).keyAt(0).getPubKey
 
     val redeemScript = swap.getRedeemScript(wantSecretHash,
-      refundPubKey, swapPubKey, SwapUtils.REFUND_TIME_NEEDED)
+      refundPubKey, swapPubKey, Swaps.SwapUtils.REFUND_TIME_NEEDED)
 
     val validP2SH = ScriptPattern.isPayToScriptHash(redeemScript)
 
@@ -725,7 +534,7 @@ object Main {
       val opret = tx.getOutputs.find(_.getScriptPubKey.isOpReturn)
 
       val limitSwap: Option[LimitSwap]
-      = opret.flatMap(extractOpReturnData).flatMap(SwapUtils.maybeLimitSwap)
+      = opret.flatMap(extractOpReturnData).flatMap(Swaps.SwapUtils.maybeLimitSwap)
 
       if (limitSwap.isDefined) {
         val (wantCoin, wantPrice, wantLocktime, wantSecretHash) = limitSwap.get
@@ -757,7 +566,7 @@ object Main {
 
     // Received a swap that is reedemable?
     val swapRedeemable: Option[RedeemableSwap] = tx.getOutputs.flatMap(out =>
-      SwapUtils.maybeRedeemableSwap(out.getScriptPubKey)).headOption
+      Swaps.SwapUtils.maybeRedeemableSwap(out.getScriptPubKey)).headOption
     if (swapRedeemable.isDefined) {
       val (hash, whoFunded, whoSwaps, locktime) = swapRedeemable.get
 
@@ -836,7 +645,7 @@ object Main {
 
           val swap_coin = limitSwap.get.get("want_coin").get.asInstanceOf[BSONString]
           val want_network = networks(swap_coin.value)
-          val kits = wallMap.getOrElse(ownerId, mutable.Map()).values.toList
+          val kits = wm.getOrElse(ownerId, mutable.Map()).values.toList
 
           val wallet: BIP47AppKit = kits.find(
             wallet => wallet
@@ -848,12 +657,12 @@ object Main {
           if (baseHtlcTx.isDefined) {
 
             val maybeUtxo = baseHtlcTx.get.getOutputs.find(
-              out => SwapUtils
+              out => Swaps.SwapUtils
                 .maybeRedeemableSwap(out.getScriptPubKey).isDefined)
             val utxo = maybeUtxo.get
 
             println(s"UTXO VALUE: ${utxo.getValue.toFriendlyString}")
-            val redeemableSwap = SwapUtils.maybeRedeemableSwap(utxo.getScriptPubKey)
+            val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(utxo.getScriptPubKey)
 
             val swap_payee = get_collection_string_value(
               USER_HTLC, ownerId, "swap_payee", secretHash.toString)
@@ -974,105 +783,6 @@ object Main {
   import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup
   import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow
 
-  def make_inline_keyboard
-  (buttonRows: List[List[(Labels.Value, Either[String, Callbacks.Value])]],
-   lang: String): InlineKeyboardMarkup = {
-
-    val markupInline = new InlineKeyboardMarkup
-    val rows = new util.ArrayList[util.List[InlineKeyboardButton]]
-
-    for (buttonRow <- buttonRows) {
-      val inlineRow = new util.ArrayList[InlineKeyboardButton]
-      for (button <- buttonRow) {
-
-        val keyboardButton =
-          new InlineKeyboardButton()
-            .setText(translations((button._1.toString, lang)))
-
-        if (button._2.isRight) {
-
-          keyboardButton
-            .setCallbackData(button._2.right.get.toString)
-        } else {
-          val call = button._2.left.get
-          if (call.startsWith("http"))
-            keyboardButton.setUrl(call)
-          else
-            keyboardButton.setCallbackData(button._2.left.get)
-        }
-
-        inlineRow.add(keyboardButton)
-      }
-      rows.add(inlineRow)
-    }
-    markupInline.setKeyboard(rows)
-    return markupInline
-  }
-
-  def make_options_keyboard(xs: List[String], ncols: Int): ReplyKeyboardMarkup = {
-    //println(s"Making options: ${xs.mkString(",")} in ${ncols} columns")
-    val replyKeyboardMarkup = new ReplyKeyboardMarkup
-    replyKeyboardMarkup.setSelective(true)
-    replyKeyboardMarkup.setResizeKeyboard(true)
-    replyKeyboardMarkup.setOneTimeKeyboard(false)
-
-    val keyboard: java.util.List[KeyboardRow] = new java.util.ArrayList()
-    var nextRow: KeyboardRow = null
-
-    for (opt <- xs.zipWithIndex) {
-      if (opt._2 % ncols == 0) {
-        nextRow = new KeyboardRow
-        keyboard.add(nextRow)
-      }
-
-      nextRow.add(opt._1)
-    }
-
-    replyKeyboardMarkup.setKeyboard(keyboard)
-    return replyKeyboardMarkup
-  }
-
-  // format helpers
-  def formatAmount(coin: Coin, coinName: String): String = {
-    coin.toFriendlyString.replace("BTC", coinName)
-  }
-
-  def formatAddress(address: Address, coinName: String): String = {
-    val isCash = coinName.contains("BCH") || coinName.contains("BSV")
-
-    if (isCash && !(coinName.contains("BSV"))) {
-      new CashAddress(address).encode()
-    } else
-      address.toString
-  }
-
-  def formatBalance(wallet: BIP47AppKit): String = {
-    formatAmount(wallet.getBalance, wallet.getCoinName)
-      .replace(wallet.getCoinName, s"*${wallet.getCoinName}*")
-  }
-
-  // 0. Main menu
-  def get_main_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options =
-      List(
-        getWalletsCommand(lang),
-        getSpendCommand(lang),
-        getHTLCListCommand(lang),
-        getSettingsCommand(lang)
-      )
-    make_options_keyboard(options, 2)
-  }
-
-  def get_swaps_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options =
-      List(
-        getLockSwapCommand(lang),
-        getHTLCListCommand(lang),
-        getBackCommand(lang)
-      )
-    make_options_keyboard(options, 3)
-  }
-
   // help functions
   def get_back_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     make_options_keyboard(List(getBackCommand(lang)), 2)
@@ -1083,27 +793,17 @@ object Main {
   }
 
   // 1. Wallet menu
-  def get_wallet_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options = List(
-      getWalletsCommand(lang),
-      getAddressListCommand(lang),
-      getTransactionsCommand(lang),
-      getSpendCommand(lang),
-      getLockCommand(lang),
-      getPeersCommand(lang),
-      getBackCommand(lang))
-    make_options_keyboard(options, 2)
-  }
+
 
   def faucetable_coins(): Seq[String] = {
     val adminExists = userDir(adminId).exists()
-    val adminHasWallets = wallMap.contains(adminId)
+    val adminHasWallets = wm.contains(adminId)
     if (false == adminExists || false == adminHasWallets) {
       throw new CatchError(Errors.FAUCET_NEEDS_ADMIN)
     }
 
     val faucetCoins = mutable.Set[String]()
-    val adminWallets: UserWallets = wallMap(adminId)
+    val adminWallets: UserWallets = wm(adminId)
     for (wall <- adminWallets) {
       // only test bitcoins
       if (wall._1.startsWith("t")) {
@@ -1115,27 +815,10 @@ object Main {
     faucetCoins.toSeq
   }
 
-  def spendable_coins(uid: Int): Seq[String] = {
-    val options: ListBuffer[String] = ListBuffer()
-    for (w <- wallMap.getOrElse(uid, mutable.Map())) {
-      val balance = w._2.getBalance
-      val network = w._2.getParams
-      val minBalance = network.getMinNonDustOutput.add(network.getReferenceDefaultMinTxFee)
 
-      if (balance.isGreaterThan(minBalance)) {
-        options += w._1
-      }
-    }
-    options
-  }
 
   // 2. Spend
-  def get_spend_coin_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
-    val options: ListBuffer[String] = ListBuffer()
-    options ++= spendable_coins(uid)
-    options += getBackCommand(lang)
-    make_options_keyboard(options.toList, 2)
-  }
+
 
   def get_faucet_coin_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
@@ -1170,14 +853,6 @@ object Main {
   make_options_keyboard(options.toList, 2)
   }*/
 
-  def get_all_coins_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
-    val options: ListBuffer[String] = ListBuffer()
-    val coins: List[String] = wallMap.get(uid).fold[List[String]](List())(map => map.keys.toList)
-    options ++= coins
-    options += getBackCommand(lang)
-    make_options_keyboard(options.toList, 3)
-  }
-
   def payees(m: Message): List[(String, String)] = {
     val uid = m.getFrom.getId
     val bson: Option[BSONValue] =
@@ -1207,31 +882,31 @@ object Main {
     for ((payee_name, payee_address) <- payees(m)) {
       options += payee_name
     }
-    options += getAddPayeeCommand(lang)
-    options += getBackCommand(lang)
-    options += getCancelCommand(lang)
+    options += getCommand(Commands.ADD_PAYEE, lang)
+    options += getCommand(Commands.BACK, lang)
+    options += getCommand(Commands.CANCEL, lang)
     make_options_keyboard(options.toList, 1)
   }
 
   // 3. Lock
   def get_lock_coin_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
-    options ++= spendable_coins(uid)
-    options += getBackCommand(lang)
+    options ++= Spend.spendable_coins(uid)
+    options += getCommand(Commands.BACK, lang)
     make_options_keyboard(options.toList, 2)
   }
 
   // 3.1 Lock coin
   def get_lock_scripts_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
-    options += getLockSwapCommand(lang)
-    options += getCancelCommand(lang)
+    options += getCommand(Commands.LOCK_SWAP, lang)
+    options += getCommand(Commands.CANCEL, lang)
     make_options_keyboard(options.toList, 2)
   }
 
   def get_coin_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
-    options ++= wallMap.getOrElse(uid, mutable.Map()).keySet.toList
+    options ++= wm.getOrElse(uid, mutable.Map()).keySet.toList
     options += getCancelCommand(lang)
     make_options_keyboard(options.toList, 2)
   }
@@ -1242,67 +917,10 @@ object Main {
     return make_inline_keyboard(rows, lang)
   }
 
-  def get_htlc_list_inline_keyboard(htlc: HTLCFromTx,
-                                    url: String,
-                                    lang: String,
-                                    current: Int,
-                                    total: Int): InlineKeyboardMarkup = {
 
-    println(s"Htlc keyboard for: ${htlc._3.getHashAsString}")
-    if (total == 0)
-      return make_inline_keyboard(List(), lang)
-
-    val openBtn = (Labels.OPEN_LINK, Left(url))
-    val sweepBtn = (Labels.HTLC_SWEEP, Right(Callbacks.HTLC_DO_SWEEP))
-    val refundBtn = (Labels.HTLC_REFUND, Right(Callbacks.HTLC_DO_REFUND))
-    val viewBtn = (Labels.VIEW_CONTRACT, Right(Callbacks.VIEW_HTLC))
-    val nextBtn = (Labels.NEXT, Right(Callbacks.NEXT_HTLC))
-    val prevBtn = (Labels.PREV, Right(Callbacks.PREV_HTLC))
-
-    val opts =
-      if (current == 0)
-        (if (total > 1) List(nextBtn) else List())
-      else if (current == total - 1)
-        List(prevBtn)
-      else
-        List(prevBtn, nextBtn)
-
-    val row1 = mutable.ListBuffer(openBtn, viewBtn)
-
-    // if the swap key corresponds, it's a sweep
-    // if the refune key corresponds, it's a refund
-    val (ps, kit, tx, utxo, redeemScript) = htlc
-
-    val swapPubkey = redeemScript.getChunks.get(4).data
-    val refundPubkey = redeemScript.getChunks.get(10).data
-    val notificationKey = kit.getAccount(0).keyAt(0);
-
-    println(s"My key: ${Utils.HEX.encode(notificationKey.getPubKey)}")
-    println(s"Refund key: ${Utils.HEX.encode(utxo.getScriptPubKey.getChunks.get(10).data)}")
-    println(s"SWAP key: ${Utils.HEX.encode(utxo.getScriptPubKey.getChunks.get(4).data)}")
-
-    if (notificationKey.getPubKey.deep == swapPubkey.deep)
-      if (utxo.isAvailableForSpending)
-        row1 += sweepBtn
-
-    if (notificationKey.getPubKey.deep == refundPubkey.deep)
-      if (utxo.isAvailableForSpending)
-        row1 += refundBtn
-
-    val rows = List(row1.toList, opts)
-    return make_inline_keyboard(rows, lang)
-  }
 
   // 4. Settings
-  def get_settings_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
-    val options: ListBuffer[String] = ListBuffer()
-    options += getWhoamiCommand(lang)
-    options += getSeedCommand(lang)
-    options += getLanguageCommand(lang)
-    options += getInfoCommand(lang)
-    options += getBackCommand(lang)
-    make_options_keyboard(options.toList, 2)
-  }
+
 
   def get_language_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
@@ -1313,86 +931,7 @@ object Main {
   }
 
   //getPayeesCommand(lang)
-  def get_language(m: Message): String =
 
-    get_collection_value(LANGUAGE_COLLECTION, m.getFrom.getId, "lang") match {
-      case Some(BSONString(value)) => value
-      case _ => get_collection_value(LANGUAGE_COLLECTION, m.getChatId.toInt, "lang") match {
-        case Some(BSONString(value)) => value
-        case _ => "es"
-      }
-    }
-
-
-  def set_language(who: Who, lang: String) = save_db(LANGUAGE_COLLECTION, who, "data", document("lang" -> lang))
-
-  def get_meta_string(who: Who, key: String): Option[String] =
-    get_collection_value(USER_META_COLLECTION, who, key).flatMap(optCoin => optCoin match {
-      case BSONString(value) => Some(value)
-      case ext => {
-        println(s"get_meta_string ${key} Match error: now got: ${ext}")
-        None
-      }
-    }) match {
-      case None => {
-        println(s"WARNING: Missing meta: ${key}"); None
-      }
-      case x => x
-    }
-
-  def get_meta_string(m: Message, key: String): Option[String] = get_meta_string(m.getFrom.getId, key)
-
-  def get_meta_long(who: Who, key: String): Option[Long] =
-    get_collection_value(USER_META_COLLECTION, who, key).flatMap(optCoin => optCoin match {
-      case BSONLong(value) => Some(value)
-      case ext => {
-        println(s"get_meta_long Match error: now got: ${ext}")
-        None
-      }
-    })
-
-  def get_meta_long(m: Message, key: String): Option[Long] = get_meta_long(m.getFrom.getId, key)
-
-  def get_state(who: Who): States.Value = {
-    //import reactivemongo.bson.Macros
-    val st: BSONValue = get_collection_value(USER_STATE_COLLECTION, who, "state", BSONString(STARTSTATE.toString())).get
-    st match {
-      case BSONString(value) => States.withName(value)
-      case _ => throw new Exception()
-    }
-
-  }
-
-  def save_db(collection: Collections.Value, who: Who, key: String, data: BSONValue): Unit = {
-    val selector = BSONDocument("who" -> BSONInteger(who)) //document("who" -> who)
-    val modifier = BSONDocument("$set" -> BSONDocument(key -> data))
-    val upsert: Future[reactivemongo.api.commands.UpdateWriteResult] = col(collection)
-      .flatMap(_.update(selector, modifier, upsert = true))
-    val res = Await.ready(upsert, 2 seconds)
-  }
-
-  def insert_db(collection: Collections.Value, who: Who, key: String, data: BSONValue): Unit = {
-    val selector = BSONDocument("who" -> BSONInteger(who)) //document("who" -> who)
-    val modifier = BSONDocument("$push" -> BSONDocument(key -> data))
-    val upsert: Future[reactivemongo.api.commands.UpdateWriteResult] = col(collection)
-      .flatMap(_.update(selector, modifier, upsert = true))
-    val res = Await.ready(upsert, 2 seconds)
-  }
-
-  def save_meta(m: Message, key: String, value: BSONValue) = {
-    println(s"Saving ${key} ... ") //=> ${value}")
-    save_db(USER_META_COLLECTION, m.getFrom.getId, s"data.${key}", value)
-  }
-
-  def clean_meta(m: Message) =
-    save_db(USER_META_COLLECTION, m.getFrom.getId, "data", document())
-
-  def save_state(m: Message, state: States.Value): Unit = {
-    val who = m.getFrom.getId
-    println(s"Saving state of ${who} to ${state.toString()}")
-    val v: BSONDocument = document("state" -> state.toString) //Document("state" -> state.toString()
-    save_db(USER_STATE_COLLECTION, who, "data", v)
-  }
 
   def editTextMessage(bot: TelegramLongPollingBot,
                       message: Message,
@@ -1422,12 +961,12 @@ object Main {
     val ownerId = query.getFrom.getId
     val lang = get_language(message)
 
-    if (false == wallMap.contains(ownerId)) {
+    if (false == wm.contains(ownerId)) {
       println("Automatically starting wallets ...")
       startWallets(message, bot, lang)
     }
 
-    val wallets = wallMap.getOrElse(
+    val wallets = wm.getOrElse(
       ownerId, mutable.Map()).values.toList
 
     val txPattern = s".*${translations(Labels.TX_HASH.toString, lang).toLowerCase}: ([A-Za-z0-9]+) ?.*".r
@@ -1436,14 +975,14 @@ object Main {
     val maybeHTLCTx: Option[HTLCFromTx] = normalizedText match {
 
       case txPattern(txHash) => {
-        val htlcList = listHTLCS(wallets)
+        val htlcList = Swaps.listHTLCS(wallets)
         val i = htlcList
           .map(_.getHashAsString).indexWhere(_.startsWith(txHash))
         val tx = htlcList(i)
         val kit = wallets.find(_.getvWallet().getTransaction(tx.getHash) != null)
         val ps = kit.get.getParams
         val utxo = tx.getOutputs.find(out =>
-          SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
+          Swaps.SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
         ).get
         val redeemScript = utxo.getScriptPubKey
         Some((ps, kit.get, tx, utxo, redeemScript))
@@ -1533,7 +1072,7 @@ object Main {
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, tx, utxo, htlc)) => {
 
-          val htlcList = listHTLCS(wallets)
+          val htlcList = Swaps.listHTLCS(wallets)
           val currentIndex = htlcList
             .map(_.getHashAsString).indexWhere(_.startsWith(tx.getHashAsString))
 
@@ -1541,9 +1080,9 @@ object Main {
             currentIndex - 1 else currentIndex + 1
 
           val next = htlcList(nextIndex)
-          val newText = showHTLC(next, wallet, nextIndex, htlcList.size, lang)
+          val newText = Swaps.showHTLC(next, wallet, nextIndex, htlcList.size, lang)
 
-          val inlineKeyboard = get_htlc_list_inline_keyboard(
+          val inlineKeyboard = Swaps.get_htlc_list_inline_keyboard(
             maybeHTLCTx.get, getTransactionLink(wallet.getCoinName, next), lang, nextIndex, htlcList.size)
 
           assert(!newText.equals(message.getText))
@@ -1558,7 +1097,7 @@ object Main {
         case Some((ps, payeeHaswallet, tx, utxo, htlc)) => {
           println(s"Found tx: ${tx.getHashAsString}")
           // get redeemable swap
-          val redeemableSwap = SwapUtils.maybeRedeemableSwap(htlc)
+          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(htlc)
           val (secretHash, whoFunded, whoSwaps, locktime) = redeemableSwap.get
 
           // find where to lock.
@@ -1583,7 +1122,7 @@ object Main {
           val refundPubKey = wantWallet.getAccount(0).keyAt(0).getPubKey;
 
           val htlc_script = swap.getRedeemScript(secretHash,
-            refundPubKey, swapPubKey, SwapUtils.REFUND_TIME_NEEDED)
+            refundPubKey, swapPubKey, Swaps.SwapUtils.REFUND_TIME_NEEDED)
 
           // Price :: Want/Have  (e.g. received 'lockedHave' :: tBTC)
           // e.g. 20 :: tBCH/tBTC
@@ -1633,7 +1172,7 @@ object Main {
         case None => println("WARN: No htlc tx")
         case Some((ps, wallet, htlcTx, utxo, htlc)) => {
           // get redeemable swap
-          val redeemableSwap = SwapUtils.maybeRedeemableSwap(htlc)
+          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(htlc)
           val (secretHash, whoFunded, whoSwaps, locktime) = redeemableSwap.get
 
           // we have the hash, what's the secret?
@@ -1859,6 +1398,7 @@ object Main {
     import java.io.File
     import java.util.List
     import javax.imageio.ImageIO
+    import io.nayuki.qrcodegen.QrCode
     import io.nayuki.qrcodegen._
 
     // Simple operation
@@ -1868,7 +1408,7 @@ object Main {
   }
 
   def startWallets(m: Message, bot: TelegramLongPollingBot, lang: String): Unit = {
-    if (wallMap.contains(m.getFrom.getId)) return
+    if (wm.contains(m.getFrom.getId)) return
 
     val usrDir = userDir(m.getFrom.getId)
     println(s"Starting wallets in ${usrDir} ...")
@@ -1900,9 +1440,9 @@ object Main {
       wallets.put("tBTC", tbtc)
       wallets.put("tBCH", tbch)
 
-      println(s"Created wallets: ${wallMap.keys.mkString(",")}")
+      println(s"Created wallets: ${wm.keys.mkString(",")}")
 
-      wallMap.put(m.getFrom.getId, wallets)
+      wm.put(m.getFrom.getId, wallets)
       save_state(m, MAINMENU)
     } catch {
       case e: Throwable => println(s"${e.toString()}. Failed to create wallets " + e.getStackTraceString)
@@ -1924,7 +1464,7 @@ object Main {
     val faucetCmd = getFaucetCommand(lang)
 
     // connect user wallets
-    if (incomingMsg != "/start" && false == wallMap.contains(m.getFrom.getId)) {
+    if (incomingMsg != "/start" && false == wm.contains(m.getFrom.getId)) {
       println("Automatically starting wallets ...")
       startWallets(m, bot, lang)
     }
@@ -1978,13 +1518,13 @@ object Main {
         messageOnMainMenu(m, lang)
       }
       case SWAPSMENU => {
-        messageOnSwapsMenu(m, lang)
+        Swaps.messageOnSwapsMenu(m, lang)
       }
       case FAUCETMENU => {
         messageOnFaucetMenu(m, lang)
       }
       case WALLETMENU | WALLET_PEERS => {
-        messageOnWallets(m, lang)
+        Wallets.messageOnWallets(m, lang)
       }
       case ADDRESS_LIST => {
         messageOnAddressList(m, lang)
@@ -2055,15 +1595,6 @@ object Main {
       println("WARN, no text!")
   }
 
-  import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard
-  import org.telegram.telegrambots.meta.api.methods.send.SendMessage
-
-  def sendMessageDefault(m: Message, lang: String): SendMessage = {
-    val markup = get_main_menu_keyboard(lang)
-    save_state(m, MAINMENU)
-    return sendHelpMessage(m.getChatId, m.getMessageId, markup, lang)
-  }
-
   /*
   * Wallets
   *   1 BSV
@@ -2081,53 +1612,7 @@ object Main {
   *   * BSV
   */
 
-  def sendChooseOptionMessage(m: Message,
-                              replyKeyboard: ReplyKeyboard, lang: String,
-                              text: String = "Choose option"
-                             ): SendMessage = {
-    //println(s"sendChooseOptionMessage: ${text}")
-    val sendMessage: SendMessage = new SendMessage()
-    sendMessage.enableMarkdown(true)
-    sendMessage.setChatId(m.getChatId.toString)
-    sendMessage.setReplyToMessageId(m.getMessageId)
-    sendMessage.setReplyMarkup(replyKeyboard)
-    sendMessage.setText(text)
-    return sendMessage
-  }
 
-  def replyTextMessage(chatId: Long, replyTo: Integer, text: String): SendMessage = {
-    val sendMessage = new SendMessage()
-    sendMessage.enableMarkdown(true)
-    sendMessage.setChatId(chatId)
-    if (replyTo != null && replyTo > 0)
-      sendMessage.setReplyToMessageId(replyTo)
-    sendMessage.setText(text)
-    return sendMessage
-  }
-
-  def replyTextMessage(m: Message, text: String): SendMessage = {
-    replyTextMessage(m.getChatId, m.getMessageId, text)
-  }
-
-  def replyTextMessage(bot: TelegramLongPollingBot, chatId: Long, replyTo: Integer, text: String): Unit = {
-    val msg = replyTextMessage(chatId, replyTo, text)
-    bot.execute[Message, BotApiMethod[Message]](msg)
-  }
-
-  def replyError(m: Message, e: Errors.Value, lang: String): SendMessage = {
-    println(s"Replying with error: ${e.toString}")
-    replyTextMessage(m, e.toString())
-  }
-
-  def sendHelpMessage(chatId: Long, messageId: Integer, markup: ReplyKeyboardMarkup, lang: String): SendMessage = {
-    val sendMessage = new SendMessage()
-    sendMessage.enableMarkdown(true)
-    sendMessage.setChatId(chatId)
-    sendMessage.setReplyToMessageId(messageId)
-    sendMessage.setReplyMarkup(markup)
-    sendMessage.setText(getHelpMessage(lang))
-    return sendMessage
-  }
 
   def nextAddress(kit: BIP47AppKit, channel: BIP47Channel): Address = {
     assert(channel != null)
@@ -2146,15 +1631,15 @@ object Main {
 
       println(s"Validating coin: ${coin}")
 
-      if (false == wallMap.contains(m.getFrom.getId))
+      if (false == wm.contains(m.getFrom.getId))
         throw new CatchError(Errors.NEEDS_START)
 
-      if (false == wallMap(m.getFrom.getId).contains(coin)) {
+      if (false == wm(m.getFrom.getId).contains(coin)) {
         println(s"Invalid coin: ${coin}")
         throw new CatchError(Errors.INVALID_COIN)
       } else {
         save_meta(m, "coin", BSONString(coin))
-        (coin, wallMap(m.getFrom.getId)(coin))
+        (coin, wm(m.getFrom.getId)(coin))
       }
     })
 
@@ -2303,14 +1788,14 @@ object Main {
   def messageOnSpend(m: Message, lang: String): SendMessage = if (m.hasText) {
     //println(s"messageOnSpend: ${m.getText}")
 
-    if (false == wallMap.contains(m.getFrom.getId)) {
+    if (false == wm.contains(m.getFrom.getId)) {
       print("Error: user does not have wallets")
       return replyTextMessage(m, "Error: You don't have wallets. Click: /start")
     }
 
     val state = get_state(m.getFrom.getId)
 
-    val wallets = wallMap(m.getFrom.getId)
+    val wallets = wm(m.getFrom.getId)
 
     state match {
       case SPEND => {
@@ -2324,7 +1809,9 @@ object Main {
       // SPEND COIN_TO :: Payee address => SPEND_COIN_TO => Enter amount
       case SPEND_COIN => {
 
-        if (m.getText.equals(getAddPayeeCommand(lang))) {
+        val addPayeeCommand = getCommand(Commands.ADD_PAYEE, lang)
+
+        if (m.getText.equals(addPayeeCommand)) {
           save_meta(m, "next_state", BSONString(SPEND_COIN.toString))
           save_state(m, ADD_NEW_PAYEE)
           return sendChooseOptionMessage(m, get_cancel_menu_keyboard(lang), lang, getAskNewPayeeAddress(lang))
@@ -2389,7 +1876,7 @@ object Main {
         val txhash = get_meta_string(m, "txhash")
         val txhex = get_meta_string(m, "txhex")
 
-        val wallet = wallMap(m.getFrom.getId)(coin)
+        val wallet = wm(m.getFrom.getId)(coin)
         if (false == wallet.isValidAddress(payee_address))
           throw new CatchError(Errors.INVALID_RECIPIENT)
 
@@ -2435,7 +1922,7 @@ object Main {
   def messageOnLock(m: Message, lang: String): SendMessage = if (m.hasText) {
     println(s"messageOnLock: ${m.getText}")
 
-    if (false == wallMap.contains(m.getFrom.getId)) {
+    if (false == wm.contains(m.getFrom.getId)) {
       print("Error: user does not have wallets")
       return replyTextMessage(m, "Error: You don't have wallets. Click: /start")
     }
@@ -2459,7 +1946,7 @@ object Main {
       // 1. LOCK_COIN :: Script menu => LOCK_COIN_SCRIPT => Payee menu
       case LOCK_COIN => {
         val lock_script = m.getText
-        val swapCmd = getLockSwapCommand(lang)
+        val swapCmd = getCommand(Commands.LOCK_SWAP, lang)
         if (false == swapCmd.equals(lock_script))
           return replyTextMessage(m, "Choose a valid script contract")
 
@@ -2472,7 +1959,9 @@ object Main {
       // ask amount, then build p2sh
       case LOCK_COIN_SCRIPT => {
 
-        if (m.getText.equals(getAddPayeeCommand(lang))) {
+        val addPayeeCommand = getCommand(Commands.ADD_PAYEE, lang)
+
+        if (m.getText.equals(addPayeeCommand)) {
           save_meta(m, "next_state", BSONString(LOCK_COIN_SCRIPT.toString))
           save_state(m, ADD_NEW_PAYEE)
           return sendChooseOptionMessage(m, get_cancel_menu_keyboard(lang), lang, getAskNewPayeeAddress(lang))
@@ -2528,7 +2017,7 @@ object Main {
         // Let the payee know, we want to swap
         val want_coin = "tBTC"
         val price: Float = 0.5f
-        val locktime: Long = SwapUtils.REFUND_TIME_NEEDED;
+        val locktime: Long = Swaps.SwapUtils.REFUND_TIME_NEEDED;
         val limitPayload = haveSwap
           .getLimitSwapPayload(want_coin, price, locktime, htlc_secret_hash.getBytes)
         val limitAddress = Address.fromString(kit.getParams, payee_otc_address)
@@ -2563,7 +2052,7 @@ object Main {
         //new BIP47PaymentCode(kit.getPaymentCode).getPubKey
         val htlc_script = haveSwap.getRedeemScript(
           htlc_secret_hash, htlc_refund_pubkey, htlc_payee_pubkey,
-          SwapUtils.REFUND_TIME_NEEDED)
+            Swaps.SwapUtils.REFUND_TIME_NEEDED)
 
         val validP2SH = ScriptPattern.isPayToScriptHash(htlc_script)
 
@@ -2627,7 +2116,7 @@ object Main {
         val txhash = get_meta_string(m, "htlc_tx_hash")
         val txhex = get_meta_string(m, "htlc_tx_hex")
 
-        val wallet = wallMap(m.getFrom.getId)(coin)
+        val wallet = wm(m.getFrom.getId)(coin)
         if (false == wallet.isValidAddress(payee_address))
           throw new CatchError(Errors.INVALID_RECIPIENT)
 
@@ -2655,24 +2144,6 @@ object Main {
         }
       }
 
-      /*
-      Anton Tovstonozhenko anton@ambisafe.co a través de googlegroups.com
-
-      I'm using lib to create transaction spending btc from multisig.
-
-      redeemScript = ScriptBuilder.createMultiSigOutputScript(threshold, ecKeys);
-      multisigAddress = ScriptBuilder.createP2SHOutputScript(redeemScript).getToAddress(MainNetParams.get()).toString();
-      inputScript = ScriptBuilder.createP2SHMultiSigInputScript(null, redeemScript);
-
-      new TransactionInput(tx.getParams(), tx, inputScript.getProgram(), new TransactionOutPoint(tx.getParams(),
-                          utxo .getOutputIndex(), new Sha256Hash(utxo.getTransactionHash())), utxo.getAmount());
-
-      tx - transaction where you need to add the input
-      utxo - stores info about unspent output:
-          private String transactionHash;
-          private int outputIndex;
-          private Coin amount;
-      */
       case LOCK_CONFRMATION => {
         // expect recipient
         val contract = get_meta_string(m, "contract")
@@ -2700,7 +2171,7 @@ object Main {
       case ADD_NEW_PAYEE => {
         // validate payment address
         val address = m.getText
-        val firstWallet = wallMap.get(m.getFrom.getId).getOrElse(mutable.Map()).head._2
+        val firstWallet = wm.get(m.getFrom.getId).getOrElse(mutable.Map()).head._2
 
         if (firstWallet.isValidAddress(address)) {
           val text = getAskNewPayeeName(lang)
@@ -2747,168 +2218,7 @@ object Main {
     sendChooseOptionMessage(m, get_main_menu_keyboard(lang), lang)
   }
 
-  def viewWallets(m: Message, lang: String): SendMessage = {
-    save_state(m, WALLETMENU)
-    val wallets: mutable.Map[String, BIP47AppKit] = wallMap.getOrElse(m.getFrom.getId, mutable.Map())
-    var txt: String = "Wallets:\n"
 
-    // Payment address
-    val pcodes: mutable.Set[String] = mutable.Set()
-    for (elem <- wallets) {
-      pcodes += elem._2.getPaymentCode
-    }
-    println(s"PCODES Size: ${pcodes}")
-    assert(pcodes.size == 1)
-
-    txt += s"*Universal address:* ${pcodes.head}\n\n"
-    txt += "Balances\n"
-    for (elem <- wallets) {
-      val height = elem._2.getvWallet().getLastBlockSeenHeight
-      txt = txt + s"\t${formatBalance(elem._2)} @ ${height}\n"
-    }
-
-    sendChooseOptionMessage(m, get_wallet_menu_keyboard(lang), lang, txt)
-  }
-
-  def viewSwaps(m: Message, lang: String): SendMessage = {
-    save_state(m, SWAPSMENU)
-
-    val wallets = wallMap.getOrElse(m.getFrom.getId, mutable.Map())
-    var txt: String = "Locked:\n"
-    val keyboard = get_swaps_menu_keyboard(lang)
-    println("Replying on view swaps keyboard")
-    sendChooseOptionMessage(m, keyboard, lang, txt)
-  }
-
-  def listHTLCS(wallets: List[BIP47AppKit]): List[Transaction] = {
-    assert(wallets.size > 0)
-    val isHTLC: Transaction => Boolean = (tx: Transaction) => {
-      tx.getOutputs.exists(
-        out => SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined)
-    }
-    wallets.map(_.getTransactions).flatMap(txList => txList.filter(isHTLC(_)))
-  }
-
-  def showHTLC(htlc: Transaction, wallet: BIP47AppKit, i: Int, n: Int, lang: String): String = {
-    val output = htlc.getOutputs.find(out =>
-      SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined)
-
-    val script = output.get.getScriptPubKey
-    val isSpendable = output.get.isAvailableForSpending
-    val isMine = output.get.isMine(wallet.getvWallet())
-
-    val redeemableSwap = SwapUtils.maybeRedeemableSwap(script)
-    val (hash, whoFunded, whoSwaps, locktime) = redeemableSwap.get
-
-    val fundKey = ECKey.fromPublicOnly(whoFunded)
-    val payeeKey = ECKey.fromPublicOnly(whoSwaps)
-    val fundedByOwner = wallet.getvWallet().hasKey(fundKey)
-    val fundedByPayee = wallet.getvWallet().hasKey(payeeKey)
-
-    var txt = s"HTLC (${i + 1} of ${n})."
-    txt += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${htlc.getHashAsString}"
-
-    htlc.getConfidence.getConfidenceType match {
-      case TransactionConfidence.ConfidenceType.BUILDING => {
-        txt += s"\nBlock: ${htlc.getConfidence.getAppearedAtChainHeight}"
-        txt += s" (depth ${htlc.getConfidence.getDepthInBlocks})"
-      }
-      case c =>
-        txt += s"\n**Confidence:** ${htlc.getConfidence().getDepthInBlocks}"
-    }
-
-    val scriptValue = output.get.getValue
-
-    txt += s"\nLocktime: ${locktime}" +
-      s"\nContract value: ${formatAmount(scriptValue, wallet.getCoinName)}" +
-      s"\nFunded by owner: ${fundedByOwner}" +
-      s"\nFunded by swap: ${fundedByPayee}" +
-      s"\nIs spent: ${!isSpendable}" +
-      s"\nIs mine: ${isMine}"
-
-    txt
-  }
-
-  def messageOnMainMenu(m: Message, lang: String): SendMessage = if (m.hasText) {
-    println(s"messageOnMainMenu: ${m.getText}")
-    val walletsCmd = getWalletsCommand(lang)
-    val swapsCmd = getHTLCListCommand(lang)
-    val spendCmd = getSpendCommand(lang)
-    val lockCmd = getLockCommand(lang)
-    val settingsCmd = getSettingsCommand(lang)
-
-    m.getText() match {
-
-      case `walletsCmd` => viewWallets(m, lang)
-
-      case `swapsCmd` => viewSwaps(m, lang)
-
-      case `spendCmd` => {
-        save_state(m, SPEND)
-
-        val keyboard = get_spend_coin_menu_keyboard(m.getFrom.getId, lang)
-        if (spendable_coins(m.getFrom.getId).size > 0)
-          sendChooseOptionMessage(m, keyboard, lang)
-        else throw new CatchError(Errors.MISSING_SPEND_COINS)
-      }
-
-      case `lockCmd` => {
-        save_state(m, LOCK)
-        sendChooseOptionMessage(m, get_spend_coin_menu_keyboard(m.getFrom.getId, lang), lang)
-      }
-
-      case `settingsCmd` => {
-        save_state(m, SETTINGSMENU)
-        sendChooseOptionMessage(m, get_settings_menu_keyboard(m.getFrom.getId, lang), lang)
-      }
-
-      case _ => sendChooseOptionMessage(m, get_main_menu_keyboard(lang), lang)
-    }
-  } else {
-    sendChooseOptionMessage(m, get_main_menu_keyboard(lang), lang)
-  }
-
-  def messageOnSwapsMenu(m: Message, lang: String): SendMessage = {
-    assert(m.hasText)
-    val lockSwapCmd = getLockSwapCommand(lang)
-    val htlcListCmd = getHTLCListCommand(lang)
-
-    m.getText match {
-      case `lockSwapCmd` => {
-        save_state(m, LOCK)
-        sendChooseOptionMessage(m, get_spend_coin_menu_keyboard(m.getFrom.getId, lang), lang)
-      }
-      case `htlcListCmd` => {
-
-        val wallets = wallMap.getOrElse(m.getFrom.getId, mutable.Map()).values.toList
-        val htlcList = listHTLCS(wallets)
-
-        // Reply with the first
-        val reply = new SendMessage()
-        reply.setChatId(m.getChatId)
-
-        if (htlcList.isEmpty)
-          reply.setText("Empty")
-        else {
-          val first = htlcList.head
-          val wallet = wallets.find(_.getvWallet().getTransaction(first.getHash) != null)
-          val coin = wallet.get.getCoinName
-
-          val utxo = first.getOutputs.find(out =>
-            SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
-          ).get
-          val redeemScript = utxo.getScriptPubKey
-          val htlc = (wallet.get.getParams, wallet.get, first, utxo, redeemScript)
-          val inlineKeyboard = get_htlc_list_inline_keyboard(htlc,
-            getTransactionLink(coin, first), lang, 0, htlcList.size)
-          reply.setReplyMarkup(inlineKeyboard)
-          reply.setText(showHTLC(htlcList.head, wallet.get, 0, htlcList.size, lang))
-        }
-
-        reply
-      }
-    }
-  }
 
   def messageOnFaucetMenu(m: Message, lang: String): SendMessage = if (m.hasText) {
 
@@ -2920,7 +2230,7 @@ object Main {
 
     // user has meta coin
     // get admin's wallet
-    val adminKit = wallMap(adminId)(coin)
+    val adminKit = wm(adminId)(coin)
 
     // where to send faucet?
     val adr = userKit.getCurrentAddress
@@ -2968,106 +2278,7 @@ object Main {
     sendChooseOptionMessage(m, get_main_menu_keyboard(lang), lang)
   }
 
-  def messageOnWallets(m: Message, lang: String): SendMessage = if (m.hasText) {
-    val walletsCmd = getWalletsCommand(lang)
-    val txsCmd = getTransactionsCommand(lang)
-    val spendCmd = getSpendCommand(lang)
-    val lockCmd = getLockCommand(lang)
-    val addrCmd = getAddressListCommand(lang)
-    val peersCmd = getPeersCommand(lang)
 
-    m.getText match {
-
-      case `walletsCmd` => {
-        viewWallets(m, lang)
-      }
-
-      case `txsCmd` => {
-        var reply = "Transactions:\n"
-
-        val wallets: UserWallets = wallMap.getOrElse(m.getFrom.getId, mutable.Map())
-        for (elem <- wallets) {
-          val coin = elem._2.getCoinName
-          reply += s"*${elem._2.getCoinName}*\n"
-
-          val wallet = elem._2.getvWallet()
-
-          for (tx <- wallet.getTransactions(false)) {
-            val outputs = tx.getWalletOutputs(wallet)
-            val outputAddresses = outputs.map(out =>
-              out.getAddressFromP2PKHScript(wallet.getParams).toBase58)
-
-            reply += "\n------------------------\n"
-            reply += s"Hash: ${getTransactionLink(elem._2.getCoinName, tx)}\n"
-
-            if (!tx.isPending) {
-              reply += s"Confidence: ${tx.getConfidence}\n"
-            } else {
-              if (tx.getConfidence.getSource == TransactionConfidence.Source.SELF) {
-                println(s"removing tx: ${tx}")
-                elem._2.unsafeRemoveTxHash(tx.getHash)
-              } else {
-                reply += s"Confidence: ${tx.getConfidence}\n"
-              }
-
-            }
-            //if (tx.getConfidence.getLastBroadcastedAt!=null)
-            //  reply += s"Broadcast date: ${tx.getConfidence.getLastBroadcastedAt}\n"
-            if (tx.isTimeLocked)
-              reply += s"Time lock: ${tx.getLockTime}\n"
-
-            val spent = tx.getValueSentFromMe(wallet)
-            if (spent.isPositive)
-              reply += s"Value sent from me: ${formatAmount(spent, elem._2.getCoinName)}\n"
-
-            val received = tx.getValueSentToMe(wallet)
-            if (received.isPositive)
-              reply += s"Value sent to me: ${formatAmount(received, elem._2.getCoinName)}\n"
-
-            reply += s"Output addresses: ${outputAddresses.mkString(",")}"
-
-          }
-        }
-
-        replyTextMessage(m, reply)
-      }
-
-      case `addrCmd` => {
-        save_state(m, ADDRESS_LIST)
-        val keyboard = get_all_coins_menu_keyboard(m.getFrom.getId, lang)
-        sendChooseOptionMessage(m, keyboard, lang)
-      }
-
-      case `spendCmd` => {
-        save_state(m, SPEND)
-
-        val keyboard = get_spend_coin_menu_keyboard(m.getFrom.getId, lang)
-        if (spendable_coins(m.getFrom.getId).size > 0)
-          sendChooseOptionMessage(m, keyboard, lang)
-        else throw new CatchError(Errors.MISSING_SPEND_COINS)
-      }
-
-      case `lockCmd` => {
-        save_state(m, LOCK)
-        sendChooseOptionMessage(m, get_spend_coin_menu_keyboard(m.getFrom.getId, lang), lang)
-      }
-
-      case `peersCmd` => {
-        var reply = "*Connections:*\n"
-        val wallets: UserWallets = wallMap.getOrElse(m.getFrom.getId, mutable.Map())
-        for (elem <- wallets) {
-          val coin = elem._2.getCoinName
-          reply += s"*${coin}*: "
-          reply += s"${elem._2.getConnectedPeers.size} peers\n"
-        }
-
-        save_state(m, WALLET_PEERS)
-        replyTextMessage(m, reply)
-      }
-    }
-  } else {
-    sendChooseOptionMessage(m, get_main_menu_keyboard(lang), lang)
-  }
 
   def messageOnSettings(m: Message, lang: String): SendMessage = if (m.hasText) {
     val seedsCmd = getSeedCommand(lang)
@@ -3079,7 +2290,7 @@ object Main {
       case `seedsCmd` => {
         var text = ""
 
-        val wallets = wallMap(m.getFrom.getId)
+        val wallets = wm(m.getFrom.getId)
         val pcs: mutable.Set[String] = mutable.Set()
         wallets.values.foreach(w => pcs.add(w.getMnemonicCode))
         assert(pcs.size == 1)
@@ -3088,7 +2299,7 @@ object Main {
       case `whoamiCmd` => {
         save_state(m, WHOAMIMENU)
 
-        val wallets: mutable.Map[String, BIP47AppKit] = wallMap.getOrElse(m.getFrom.getId, mutable.Map())
+        val wallets: mutable.Map[String, BIP47AppKit] = wm.getOrElse(m.getFrom.getId, mutable.Map())
 
         // Payment address
         val pcodes: mutable.Set[String] = mutable.Set()
@@ -3107,7 +2318,7 @@ object Main {
       }
       case `infoCmd` => {
         var text = "info"
-        replyTextMessage(m, text)
+        Reply.replyTextMessage(m, text)
       }
       case `langCmd` => {
         save_state(m, States.LANGUAGEMENU)

@@ -2,7 +2,7 @@ package permutas.constants
 
 object Commands extends Enumeration {
   val ADD_PAYEE,
-  ADDRESSLIST,
+  ADDRESS_LIST,
   BACK,
   BROADCAST,
   BORROW,
@@ -11,7 +11,7 @@ object Commands extends Enumeration {
   ENGLISH_LANG,
   FAUCET,
   GET_PAYEE,
-  HTLCLIST,
+  HTLC_LIST,
   INFO,
   LANGUAGE,
   LOAN,

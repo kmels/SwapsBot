@@ -32,6 +32,7 @@ package object Wallets {
     val options =
       List(
         Commands.WALLETS,
+        Commands.ADDRESS_LIST,
         Commands.LOCK_SWAP,
         Commands.TRANSACTIONS,
         Commands.SPEND,

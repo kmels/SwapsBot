@@ -17,8 +17,8 @@ package object Start {
     val options =
       List(
         Commands.WALLETS,
+        Commands.REQUEST,  
         Commands.LOCK_SWAP,
-        Commands.REQUEST,
         Commands.SPEND,
         Commands.HTLC_LIST,
         Commands.SETTINGS

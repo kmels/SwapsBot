@@ -1,5 +1,4 @@
 package permutas
-
 import constants._
 
 import reactivemongo.api.{Cursor, DefaultDB, MongoConnection, MongoDriver}
@@ -237,35 +236,8 @@ object Main {
   import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard
   import org.telegram.telegrambots.meta.api.methods.send.SendMessage
 
-  /*
-   * Wallets
-   *   1 BSV
-   *   0.15 BCH
-   *   0.0157 BTC
-   *
-   *   To pay (Locked):
-   *      0.0157 BTC (05/15)
-   *   To collect (Locked):
-   *      1 BSV (05/15)
-   *
-   *   * Transactions
-   *   * Mnemonics
-   *   * Addresses
-   *   * BCH
-   *   * BSV
-   *
-   * Spend
-   *   Choose an option
-   *     * BTC
-   *     * BCH
-   *     * BSV
-   *     Send amount: 0.0001 (min: 0.0001 BSV)
-   *       * -5%
-   *       * -1%
-   *       * +1%
-   *       * +5%
-   *     Enter address:
-   *
+  /* Backlog:
+   * TODO Display contracts balance
    * Lock in someone's inbox
    *   Choose
    *   * BTC
@@ -299,9 +271,6 @@ object Main {
   val adminId = 111720349
   val faucetCoin = Coin.valueOf(0, 2)
 
-  //type Doc = org.mongodb.scala.bson.collection.Document
-
-
   // hash, who swaps, who reunds, locktime
   implicit val wm: WallMap = mutable.Map()
 
@@ -313,57 +282,8 @@ object Main {
     "tBTC" -> new TestNet3Params()
   )
 
-
-
-
   def getCommand(command: Commands.Value, lang:String) =
     translations((command.toString, lang))
-
-  def getBackCommand(lang: String): String = "\uD83D\uDD19 Back" //❌\
-  def getBroadcastCommand(lang: String) = translations((Commands.BROADCAST.toString, lang))
-
-  def getCancelCommand(lang: String) = translations((Commands.CANCEL.toString, lang))
-
-  def getFaucetCommand(lang: String) = translations((Commands.FAUCET.toString, lang))
-
-  def getEncodeCommand(lang: String) = translations((Commands.ENCODE.toString, lang))
-
-  def getEnglishLanguageCommand(lang: String) = translations((Commands.ENGLISH_LANG.toString, lang))
-
-  def getInfoCommand(lang: String) = translations((Commands.INFO.toString, lang))
-
-  def getLanguageCommand(lang: String) = translations((Commands.LANGUAGE.toString, lang))
-
-  def getLockCommand(lang: String) = translations((Commands.LOCK.toString, lang))
-
-  def getLockLoanRequest(lang: String) = translations((Commands.LOCK_LOAN.toString, lang))
-
-  def getPayeesCommand(lang: String) = translations((Commands.PAYEES.toString, lang))
-
-  def getPeersCommand(lang: String) = translations((Commands.PEERS.toString, lang))
-
-  def getRateCommand(lang: String) = translations((Commands.RATE.toString, lang))
-
-  def getRestoreCommand(lang: String) = translations((Commands.RESTORE.toString, lang))
-
-  def getRescanCommand(lang: String) = translations((Commands.RESCAN.toString, lang))
-
-  def getSpanishLanguageCommand(lang: String) = translations((Commands.SPANISH_LANG.toString, lang))
-
-  def getSeedCommand(lang: String) = translations((Commands.SEED.toString, lang))
-
-  //def getSwapsCommand(lang: String) = translations((Commands.SWAPS.toString,lang))
-  def getSweepCommand(lang: String) = translations((Commands.SWEEP.toString, lang))
-
-  def getSettingsCommand(lang: String) = translations((Commands.SETTINGS.toString, lang))
-
-  def getSpendCommand(lang: String) = translations((Commands.SPEND.toString, lang))
-
-  def getTransactionsCommand(lang: String) = translations((Commands.TRANSACTIONS.toString, lang))
-
-  def getViewScriptCommand(lang: String) = translations((Commands.VIEWSCRIPT.toString, lang))
-
-  def getWhoamiCommand(lang: String) = translations((Commands.WHOAMI.toString, lang))
 
   // Notification: 🔔
   // Sign: 🖊"BCH" -> "https://blockchair.com/bitcoin-cash/transaction/TXHASH"
@@ -526,8 +446,12 @@ object Main {
     }
 
     text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
-    text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: ${formatAmount(tx.getValueSentFromMe(wallet), coin)}"
-    text += s"\n${translations(Labels.VALUE_SENT_TO_ME.toString, lang)}: ${formatAmount(tx.getValueSentToMe(wallet), coin)}"
+    val fromMe = tx.getValueSentFromMe(wallet)
+    if (fromMe.isPositive())
+      text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: ${formatAmount(fromMe, coin)}"
+    val toMe = tx.getValueSentToMe(wallet)    
+    if (toMe.isPositive())
+    text += s"\n${translations(Labels.VALUE_SENT_TO_ME.toString, lang)}: ${formatAmount(toMe, coin)}"
 
     if (channel.isDefined) {
 
@@ -785,11 +709,11 @@ object Main {
 
   // help functions
   def get_back_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    make_options_keyboard(List(getBackCommand(lang)), 2)
+    make_options_keyboard(List(getCommand(Commands.BACK,lang)), 2)
   }
 
   def get_cancel_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    make_options_keyboard(List(getCancelCommand(lang)), 2)
+    make_options_keyboard(List(getCommand(Commands.CANCEL, lang)), 2)
   }
 
   // 1. Wallet menu
@@ -823,26 +747,38 @@ object Main {
   def get_faucet_coin_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
     options ++= faucetable_coins()
-    options += getBackCommand(lang)
+    options += getCommand(Commands.BACK, lang)
     make_options_keyboard(options.toList, 3)
   }
 
   // 2.2 Enter amount
   def get_spend_amount_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
     //val balance = kit.getvWallet()
-    val options = List("1%", "5%", "10%", "20%", "50%", "100%", getCancelCommand(lang))
+    val options = List("1%", "5%", "10%", "20%", "50%", "100%", getCommand(Commands.BACK, lang))
     make_options_keyboard(options, 3)
   }
 
   // 2.3 Confirm Spend
   def get_broadcast_tx_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options = List(getEncodeCommand(lang), getBroadcastCommand(lang), getCancelCommand(lang))
+    val options =
+      List(
+        Commands.ENCODE,
+        Commands.BROADCAST,
+        Commands.CANCEL
+      ).map(command => getCommand(command, lang))
     make_options_keyboard(options, 3)
   }
 
   def get_broadcast_contract_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options = List(getViewScriptCommand(lang), getEncodeCommand(lang), getBroadcastCommand(lang), getCancelCommand(lang))
-    make_options_keyboard(options, 3)
+    val options =
+      List(
+        Commands.VIEWSCRIPT,
+        Commands.ENCODE,
+        Commands.BROADCAST,
+        Commands.CANCEL
+      ).map(command => getCommand(command, lang))
+
+    make_options_keyboard(options, 2)
   }
 
   // contact/recipient functions
@@ -907,7 +843,7 @@ object Main {
   def get_coin_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()
     options ++= wm.getOrElse(uid, mutable.Map()).keySet.toList
-    options += getCancelCommand(lang)
+    options += getCommand(Commands.CANCEL,lang)
     make_options_keyboard(options.toList, 2)
   }
 
@@ -920,18 +856,18 @@ object Main {
 
 
   // 4. Settings
-
-
   def get_language_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
-    val options: ListBuffer[String] = ListBuffer()
-    options += getEnglishLanguageCommand(lang)
-    options += getSpanishLanguageCommand(lang)
-    options += getCancelCommand(lang)
+    val options =
+      List(
+        Commands.ENGLISH_LANG,
+        Commands.SPANISH_LANG,
+        Commands.CANCEL
+      ).map(command => getCommand(command, lang))
+
     make_options_keyboard(options.toList, 2)
   }
 
   //getPayeesCommand(lang)
-
 
   def editTextMessage(bot: TelegramLongPollingBot,
                       message: Message,
@@ -1269,7 +1205,9 @@ object Main {
       case CatchError(Errors.MISSING_SPEND_COINS) => {
         val lang = get_language(m)
         val text = translations((Errors.MISSING_SPEND_COINS.toString, lang))
-        val keyboard = make_options_keyboard(List(getFaucetCommand(lang), getBackCommand(lang)), 2)
+        val faucetCmd = getCommand(Commands.FAUCET, lang)
+        val backCmd = getCommand(Commands.BACK, lang)
+        val keyboard = make_options_keyboard(List(faucetCmd, backCmd), 2)
         val msg = sendChooseOptionMessage(m, keyboard, lang, text)
         bot.execute[Message, BotApiMethod[Message]](msg)
       }
@@ -1459,9 +1397,9 @@ object Main {
     val lang = get_language(m)
     val incomingMsg = m.getText
 
-    val cancelCmd = getCancelCommand(lang)
-    val backCmd = getBackCommand(lang)
-    val faucetCmd = getFaucetCommand(lang)
+    val cancelCmd = getCommand(Commands.CANCEL, lang)
+    val backCmd = getCommand(Commands.BACK, lang)
+    val faucetCmd = getCommand(Commands.FAUCET, lang)
 
     // connect user wallets
     if (incomingMsg != "/start" && false == wm.contains(m.getFrom.getId)) {
@@ -1469,6 +1407,10 @@ object Main {
       startWallets(m, bot, lang)
     }
 
+    println(s"Incoming message: ${incomingMsg}")
+    println(s"back message: ${backCmd}")
+    println(backCmd.equals(incomingMsg))
+  
     // filter general buttons
     incomingMsg match {
       case "/start" => startWallets(m, bot, lang)
@@ -1508,7 +1450,7 @@ object Main {
       }
       case x => {} //println(s"Unmatched handler: ${x}")
     }
-
+  
     val state = get_state(m.getFrom.getId())
 
     println(s"Current state: ${state}")
@@ -1559,8 +1501,8 @@ object Main {
         val ntxhex = get_meta_string(m, "ntxhex")
         val ntxhash = get_meta_string(m, "ntxhash")
 
-        val encodeCmd = getEncodeCommand(lang)
-        val broadcastCmd = getBroadcastCommand(lang)
+        val encodeCmd = getCommand(Commands.ENCODE,lang)
+        val broadcastCmd = getCommand(Commands.BROADCAST,lang)
 
         m.getText match {
           case `encodeCmd` => replyTextMessage(m, ntxhex.get)
@@ -1883,8 +1825,8 @@ object Main {
         var addr: Address = Address.fromString(wallet.getParams, payee_address)
         val wall = wallet.getvWallet()
 
-        val encodeCmd = getEncodeCommand(lang)
-        val broadcastCmd = getBroadcastCommand(lang)
+        val encodeCmd = getCommand(Commands.ENCODE, lang)
+        val broadcastCmd = getCommand(Commands.BROADCAST,lang)
 
         m.getText match {
           case `encodeCmd` => replyTextMessage(m, txhex.get)
@@ -2123,9 +2065,9 @@ object Main {
         var p2shAddress: Address = Address.fromString(wallet.getParams, script_address.get)
         val wall = wallet.getvWallet()
 
-        val scriptCmd = getViewScriptCommand(lang)
-        val encodeCmd = getEncodeCommand(lang)
-        val broadcastCmd = getBroadcastCommand(lang)
+        val scriptCmd = getCommand(Commands.VIEWSCRIPT,lang)
+        val encodeCmd = getCommand(Commands.ENCODE,lang)
+        val broadcastCmd = getCommand(Commands.BROADCAST,lang)
 
         m.getText match {
           case `scriptCmd` => replyTextMessage(m, scriptbytes.get)
@@ -2180,7 +2122,6 @@ object Main {
           sendChooseOptionMessage(m, get_back_menu_keyboard(lang), lang, text)
         } else
           replyError(m, Errors.INVALID_RECIPIENT, lang)
-        //replyTextMessage(m, address)
       }
       case ADD_NEW_PAYEE_ADDRESS => {
         val isSpend = next_state.toString.startsWith("SPEND")
@@ -2222,7 +2163,8 @@ object Main {
 
   def messageOnFaucetMenu(m: Message, lang: String): SendMessage = if (m.hasText) {
 
-    if (m.getText.equals(getFaucetCommand(lang)))
+    val faucetCmd = getCommand(Commands.FAUCET, lang)
+    if (m.getText.equals(faucetCmd))
       return sendChooseOptionMessage(m, get_faucet_coin_menu_keyboard(lang), lang)
 
     // validate input
@@ -2281,10 +2223,10 @@ object Main {
 
 
   def messageOnSettings(m: Message, lang: String): SendMessage = if (m.hasText) {
-    val seedsCmd = getSeedCommand(lang)
-    val whoamiCmd = getWhoamiCommand(lang)
-    val infoCmd = getInfoCommand(lang)
-    val langCmd = getLanguageCommand(lang)
+    val seedsCmd = getCommand(Commands.SEED, lang)
+    val whoamiCmd = getCommand(Commands.WHOAMI, lang)
+    val infoCmd = getCommand(Commands.INFO, lang)
+    val langCmd = getCommand(Commands.LANGUAGE, lang)
 
     m.getText match {
       case `seedsCmd` => {
@@ -2331,8 +2273,8 @@ object Main {
   }
 
   def messageOnLanguage(m: Message, lang: String): SendMessage = if (m.hasText) {
-    val esLang = getSpanishLanguageCommand(lang)
-    val enLang = getEnglishLanguageCommand(lang)
+    val esLang = getCommand(Commands.SPANISH_LANG, lang)
+    val enLang = getCommand(Commands.ENGLISH_LANG,lang)
     m.getText match {
       case `esLang` => {
         set_language(m.getFrom.getId, "es")

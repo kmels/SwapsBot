@@ -18,7 +18,7 @@ package object MongoDb {
     * BEGIN DATABASE LAYER
     * ******/
 
-  val mongoUri = "mongodb://localhost:27018" ///xcswaps_dev"
+  val mongoUri = "mongodb://localhost:27017" ///xcswaps_dev"
   import ExecutionContext.Implicits.global
 
   val driver = MongoDriver()

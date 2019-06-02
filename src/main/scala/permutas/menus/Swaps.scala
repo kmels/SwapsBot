@@ -102,8 +102,10 @@ package object Swaps {
                                     total: Int): InlineKeyboardMarkup = {
 
     println(s"Htlc keyboard for: ${htlc._3.getHashAsString}")
-    if (total == 0)
-      return make_inline_keyboard(List(), lang)
+    if (total == 0) {
+      println("Warn, empty message keyboard")
+      return row_msg_keyboard(Nil, lang)
+    }
 
     val openBtn = (Labels.OPEN_LINK, Left(url))
     val sweepBtn = (Labels.HTLC_SWEEP, Right(Callbacks.HTLC_DO_SWEEP))
@@ -143,7 +145,7 @@ package object Swaps {
         row1 += refundBtn
 
     val rows = List(row1.toList, opts)
-    return make_inline_keyboard(rows, lang)
+    return rows_msg_keyboard(rows, lang)
   }
 
   def get_swaps_menu_keyboard(lang: String): ReplyKeyboardMarkup = {

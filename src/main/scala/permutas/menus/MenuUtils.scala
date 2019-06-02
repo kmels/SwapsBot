@@ -22,9 +22,11 @@ package object MenuUtils {
 
   import permutas.i18n.translations
 
-  def make_inline_keyboard
-  (buttonRows: List[List[(Labels.Value, Either[String, Callbacks.Value])]],
-   lang: String): InlineKeyboardMarkup = {
+  
+  type Row = Seq[MsgButton]
+
+  def rows_msg_keyboard
+    (buttonRows: List[Row], lang: String): InlineKeyboardMarkup = {
 
     val markupInline = new InlineKeyboardMarkup
     val rows = new util.ArrayList[util.List[InlineKeyboardButton]]
@@ -56,6 +58,9 @@ package object MenuUtils {
     markupInline.setKeyboard(rows)
     return markupInline
   }
+
+  def row_msg_keyboard(oneRow: Row, lang: String): InlineKeyboardMarkup = rows_msg_keyboard(List(oneRow), lang)
+
 
   def get_all_coins_menu_keyboard(uid: Int, lang: String)(implicit wm: WallMap): ReplyKeyboardMarkup = {
     val options: ListBuffer[String] = ListBuffer()

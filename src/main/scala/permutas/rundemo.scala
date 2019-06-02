@@ -134,7 +134,6 @@ class Swap(params: NetworkParameters) {
     ScriptBuilder.createP2SHOutputScript(redeemScript).getToAddress(params);
   }
 
-
   // 48 bytes:
   // [want coin][price][locktime][secret]
   // [4bytes][4bytes][8 byte int][32bytes] = [48 bytes]
@@ -285,10 +284,6 @@ object Main {
   def getCommand(command: Commands.Value, lang:String) =
     translations((command.toString, lang))
 
-  // Notification: 🔔
-  // Sign: 🖊"BCH" -> "https://blockchair.com/bitcoin-cash/transaction/TXHASH"
-  // Balance: ⚖️
-
   def getEnterAddressAsk(lang: String): String = "Enter payee's address, "
 
   def getSpendAmountAsk(lang: String): String = "Enter spend amount, "
@@ -431,7 +426,7 @@ object Main {
       receiveAddr.fold(false)(isBIP47NotificationAddress(kit, _))
     val channel = receiveAddr.flatMap(getBIP47TxChannel(_, kit, tx))
 
-    var buttonRow: mutable.Buffer[KeyboardI18NButton] = mutable.Buffer(
+    var buttonRow: mutable.Buffer[MsgButton] = mutable.Buffer(
       (Labels.OPEN_LINK, Left(getTransactionLink(coin, tx))),
       (Labels.TX_SET_MEMO, Right(Callbacks.SET_MEMO))
     )
@@ -445,11 +440,17 @@ object Main {
       text += s"**${translations(Labels.INCOMING_TX.toString, lang)}**"
     }
 
-    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
+    println(s"Value from me: ${formatAmount(tx.getValueSentFromMe(wallet), coin)}")
+    println(s"Value to me: ${formatAmount(tx.getValueSentToMe(wallet), coin)}")
+    println(s"Value : ${formatAmount(tx.getValue(wallet), coin)}")
+    val maybetotal = tx.getValueSentFromMe(wallet).add(tx.getFee).minus(tx.getValueSentToMe(wallet))
+    println(s"Total : ${formatAmount(maybetotal, coin)}")
+
+    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${formatTxLink(coin, tx)}"
     val fromMe = tx.getValueSentFromMe(wallet)
     if (fromMe.isPositive())
       text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: ${formatAmount(fromMe, coin)}"
-    val toMe = tx.getValueSentToMe(wallet)    
+    val toMe = tx.getValueSentToMe(wallet)
     if (toMe.isPositive())
     text += s"\n${translations(Labels.VALUE_SENT_TO_ME.toString, lang)}: ${formatAmount(toMe, coin)}"
 
@@ -585,13 +586,11 @@ object Main {
                 .maybeRedeemableSwap(out.getScriptPubKey).isDefined)
             val utxo = maybeUtxo.get
 
-            println(s"UTXO VALUE: ${utxo.getValue.toFriendlyString}")
             val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(utxo.getScriptPubKey)
 
             val swap_payee = get_collection_string_value(
               USER_HTLC, ownerId, "swap_payee", secretHash.toString)
 
-            println(s"SWAP PAYER: ${swap_payee.get}")
             val secret = secretBytes
             val swap = new Swap(kit.getParams) //TODO: get the right params
             val sweepScript = swap.getSwapInputScript(script, secret)
@@ -600,8 +599,6 @@ object Main {
 
             val outpoint = new TransactionOutPoint(ps, utxo.getIndex, utxo.getParentTransactionHash)
             val txInput = new TransactionInput(ps, baseHtlcTx.get, sweepScript.getProgram, outpoint, utxo.getValue)
-
-            println("Bingo base")
 
             val spendTx = new Transaction(ps)
             spendTx.addInput(txInput)
@@ -612,10 +609,7 @@ object Main {
               Transaction.BCC_DEFAULT_TX_FEE
 
             spendTx.addOutput(utxo.getValue, wallet.getCurrentAddress)
-
             val feeAmount = feePerKb.div(1000).multiply(spendTx.getMessageSize);
-            //spendTx.getOutput(0).setValue(spendTx.getOutput(0).getValue.div(2))
-
             spendTx.getOutput(0).setValue(spendTx.getOutput(0).getValue.minus(feeAmount))
 
             spendTx.verify()
@@ -635,7 +629,7 @@ object Main {
               reinputScript.correctlySpends(spendTx, 0,
                 utxo.getScriptPubKey, Script.ALL_VERIFY_FLAGS)
             } catch {
-              case e: Throwable => println(s"Fails to spend: ${e.printStackTrace()}")
+              case e: Throwable => { println(s"Fails to spend: ${e.printStackTrace()}"); throw e }
             }
 
             spendTx.clearInputs()
@@ -662,8 +656,7 @@ object Main {
       }
     }
 
-    val rows = List(buttonRow.toList)
-    notification.setReplyMarkup(make_inline_keyboard(rows, lang))
+    notification.setReplyMarkup(row_msg_keyboard(buttonRow, lang))
     println("******************* END RECEIVE NOTIFICATION ********************")
     notification.setText(text)
     return notification
@@ -677,6 +670,11 @@ object Main {
 
     var text = ""
 
+    var msgButtonRow: List[MsgButton] = List(
+      (Labels.OPEN_LINK, Left(getTransactionLink(coin, tx))),
+      (Labels.TX_SET_MEMO, Right(Callbacks.SET_MEMO))
+    )
+
     println("Outgoing tx values... ")
     println(s"Value from me: ${formatAmount(tx.getValueSentFromMe(wallet), coin)}")
     println(s"Value to me: ${formatAmount(tx.getValueSentToMe(wallet), coin)}")
@@ -686,17 +684,16 @@ object Main {
 
     println(s"Total : ${formatAmount(total, coin)}")
 
+    // Incoming transaction
+    // Transaccion saliente
     text += s"${translations((Labels.OUTGOING_TX.toString, lang))}"
-    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${tx.getHashAsString.take(6)}"
+
+    text += s"\n${translations(Labels.TX_HASH.toString, lang)}: ${formatTxLink(coin,tx)}"    
     text += s"\n${translations(Labels.VALUE_SENT_FROM_ME.toString, lang)}: " +
       s"${formatAmount(tx.getValue(wallet), coin)}"
 
     val url = getTransactionLink(coin, tx)
-    val buttons = mutable.ListBuffer[(Labels.Value, Either[String, Callbacks.Value])](
-      (Labels.OPEN_LINK, Left(url))
-    )
-    val rows = List(buttons.toList)
-    val keyboard = make_inline_keyboard(rows, lang)
+    val keyboard = row_msg_keyboard(msgButtonRow, lang)
 
     notification.setReplyMarkup(keyboard)
     notification.setText(text)
@@ -849,11 +846,8 @@ object Main {
 
   def get_limit_swap_inline_keyboard(lang: String): InlineKeyboardMarkup = {
     val opts = List((Labels.SWAP_FILL, Right(Callbacks.SWAP_LIMIT_FILL)))
-    val rows = List(opts)
-    return make_inline_keyboard(rows, lang)
+    return row_msg_keyboard(opts, lang)
   }
-
-
 
   // 4. Settings
   def get_language_menu_keyboard(lang: String): ReplyKeyboardMarkup = {
@@ -1240,9 +1234,7 @@ object Main {
           assert(notificationAddress != null)
 
           val lang = get_language(m)
-
           val total = tx.getValue(wall)
-          //tx.getValueSentFromMe(wall).add(tx.getFee).minus(tx.getValueSentToMe(wall))
 
           var text = ""
           text += translations((Labels.CREATE_CHANNEL_CONFIRM.toString, lang))
@@ -1789,15 +1781,17 @@ object Main {
           }
         }
 
-        val total = tx.getValueSentFromMe(wall)
-        var text = ""
-
-        text += s"\n${translations((Labels.BROADCAST_TX_CONFIRM.toString, lang))}"
-        text += s"\n**${formatAmount(spendAmount, coin)}** to ${payee_address}" +
-          s"\n------------------------" +
-          s"\n${formatAmount(tx.getFee, coin)} as transaction fee" +
-          s"\n------------------------" +
-          s"\nTotal ${formatAmount(total, coin)}"
+        val total = tx.getValue(wall)
+        println("sent from me "+tx.getValueSentFromMe(wall).toFriendlyString())
+        println("sent to me "+tx.getValueSentToMe(wall).toFriendlyString())
+        println("overall "+tx.getValue(wall).toFriendlyString())
+        var text = s"\n${translations((Labels.BROADCAST_TX_CONFIRM.toString, lang))}" +
+        s"\n------------------------" +
+        s"\n**${formatAmount(spendAmount, coin)}** to ${payee_address}" +
+        s"\n-----------------------" +
+        s"\n${formatAmount(tx.getFee, coin)} as transaction fee" +
+        s"\n------------------------" +
+        s"\nTotal ${formatAmount(total, coin)}"
 
         save_meta(m, "txhex", BSONString(Utils.HEX.encode(tx.bitcoinSerialize())))
         save_meta(m, "txhash", BSONString(tx.getHashAsString))

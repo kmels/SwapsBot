@@ -23,6 +23,10 @@ package object Pretty {
       .replace(wallet.getCoinName, s"*${wallet.getCoinName}*")
   }
 
+  def formatLink(text: String, url: String): String = s"[${text}](${url})"
+
+  def formatTxLink(coin: String, tx: Transaction): String = formatLink(text = tx.getHashAsString.take(6),url = getTransactionLink(coin,tx))
+
   def getTransactionLink(coin: String, tx: Transaction): String = {
     val baseurl = Map(
       "BSV" -> "https://blockchair.com/bitcoin-sv/transaction/TXHASH",
@@ -33,11 +37,9 @@ package object Pretty {
       //"https://blockchair.com/bitcoin/transaction/TXHASH",
       "tBTC" -> "https://tbtc.bitaps.com/TXHASH"
       //"https://live.blockcypher.com/btc-testnet/tx/TXHASH"
-    )
+    ).get(coin)
     val defaulturl = s"https://blockchair.com/bitcoin-sv/transaction/TXHASH"
-    baseurl.get(coin)
-      .getOrElse(defaulturl)
+    baseurl.getOrElse(defaulturl)
       .replace("TXHASH", tx.getHashAsString)
-    //s"[${tx.getHashAsString.take(6)}](${url})"
   }
 }

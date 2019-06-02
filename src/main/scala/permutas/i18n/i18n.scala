@@ -118,10 +118,10 @@ package object i18n {
     (Labels.TX_HASH.toString, "es") -> "Hash",
     (Labels.TX_SET_MEMO.toString, "en") -> "Set Memo",
     (Labels.TX_SET_MEMO.toString, "es") -> "Poner Nota",
-    (Labels.VALUE_SENT_FROM_ME.toString, "en") -> "Value received",
-    (Labels.VALUE_SENT_FROM_ME.toString, "es") -> "Valor recibido",
-    (Labels.VALUE_SENT_TO_ME.toString, "en") -> "Value sent",
-    (Labels.VALUE_SENT_TO_ME.toString, "es") -> "Valor enviado",
+    (Labels.VALUE_SENT_FROM_ME.toString, "en") -> "Value sent",
+    (Labels.VALUE_SENT_FROM_ME.toString, "es") -> "Valor enviado",
+    (Labels.VALUE_SENT_TO_ME.toString, "en") -> "Value received",
+    (Labels.VALUE_SENT_TO_ME.toString, "es") -> "Valor recibido",
     (Labels.VIEW_CONTRACT.toString, "en") -> "View",
     (Labels.VIEW_CONTRACT.toString, "es") -> "Ver"
   )

@@ -1,10 +1,13 @@
 package permutas.menus
 
 import org.bitcoinj.kits.BIP47AppKit
-
-import org.bitcoinj.core.TransactionConfidence
+import org.bitcoinj.core._
+import org.bitcoinj.core.bip47._
+import org.bitcoinj.script._
 import org.telegram.telegrambots.meta.api.objects.Message
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage
+
+import permutas.wallets._
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -66,6 +69,43 @@ package object Wallets {
 
     sendChooseOptionMessage(m, get_wallet_menu_keyboard(lang), lang, txt)
   }
+
+  def watchLimitSwap(kit: BIP47AppKit,
+                     channel: BIP47Channel,
+                     wantSecretHash: Sha256Hash): Unit = {
+    println(s"Watching HTLC ... ${channel}")
+    val swap = new Swap(kit.getParams)
+
+    println(s"Theirs pyment code: ${channel.getPaymentCode}")
+
+    val refundPubkeys = channel.getOutgoingAddresses
+    println(s"Pubkeys: ${refundPubkeys.size()}")
+
+    val swapPubKey = new BIP47PaymentCode(kit.getPaymentCode).derivePubKeyAt(kit.getParams, 0)
+
+    // Alices (hash's generator) refund pubkey
+    // TODO: Refund's pubkey is current incoming address pubkey
+    val refundPubKey =
+    new BIP47Account(kit.getParams, channel.getPaymentCode).keyAt(0).getPubKey
+
+    val redeemScript = swap.getRedeemScript(wantSecretHash,
+      refundPubKey, swapPubKey, Swaps.SwapUtils.REFUND_TIME_NEEDED)
+
+    val validP2SH = ScriptPattern.isPayToScriptHash(redeemScript)
+
+    val p2shAddress: Address =
+      ScriptBuilder.createP2SHOutputScript(redeemScript)
+        .getToAddress(kit.getParams)
+
+    println(s"Adding watch script: ${p2shAddress}")
+    kit.getvWallet().addWatchedScripts(List(redeemScript))
+
+    println(s"Adding watch: ${p2shAddress}")
+
+    kit.getvWallet().addWatchedAddress(p2shAddress)
+
+    println("TODO: Rescanning blockchain...")
+    }
 
   def messageOnWallets(m: Message, lang: String)(implicit wm: WallMap): SendMessage = if (m.hasText) {
     val walletsCmd = getCommand(Commands.WALLETS, lang)

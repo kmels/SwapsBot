@@ -32,6 +32,11 @@ package object Swaps {
   import scala.collection.JavaConverters._
   import scala.collection.JavaConversions._
 
+  def get_limit_swap_inline_keyboard(lang: String): InlineKeyboardMarkup = {
+    val opts = List((Labels.SWAP_FILL, Right(Callbacks.SWAP_LIMIT_FILL)))
+    return row_msg_keyboard(opts, lang)
+  }
+
   object SwapUtils {
 
     val REFUND_TIME_NEEDED = 2; //24*60 //2;

@@ -249,14 +249,6 @@ object Main {
     make_options_keyboard(options, 2)
   }
 
-  // contact/recipient functions
-  /*def get_add_payee_menu_keyboard(uid: Int, lang: String): ReplyKeyboardMarkup = {
-  val options : ListBuffer[String] = ListBuffer(getBackCommand(lang))
-  options += getAddPayeeCommand(lang)
-  options += getCancelCommand(lang)
-  make_options_keyboard(options.toList, 2)
-  }*/
-
   def payees(m: Message): List[(String, String)] = {
     val uid = m.getFrom.getId
     val bson: Option[BSONValue] =
@@ -327,7 +319,38 @@ object Main {
     make_options_keyboard(options.toList, 2)
   }
 
-  //getPayeesCommand(lang)
+  def findTx(t: String, wallets: List[BIP47AppKit], lang: String): Option[TxMeta] = {
+    val txPattern = s".*${translations(Labels.TX_HASH.toString, lang).toLowerCase}: ([A-Za-z0-9]+) ?.*".r
+
+    t.toLowerCase().replace("\n", " ") match {
+
+    case txPattern(txHash) => {
+      val htlcList = Swaps.listHTLCS(wallets)
+      val i = htlcList
+        .map(_.getHashAsString).indexWhere(_.startsWith(txHash))
+      val isHTLC = i > 0
+      val maybeTx: Option[Transaction]= if (i < 0) {
+        wallets.flatMap(kit => kit.getTransactions.find(_.getHashAsString.startsWith(txHash))).headOption
+      } else Some(htlcList(i))
+
+      maybeTx.flatMap { tx => {
+        val kit = wallets.find(_.getvWallet().getTransaction(tx.getHash) != null).get
+        val ps = kit.getParams
+
+        val utxo = if (isHTLC) {
+          tx.getOutputs.find(out =>
+            Swaps.SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
+          ).get
+        } else {
+          tx.getOutputs.find(out => out.isMine(kit.getvWallet)).getOrElse(null)
+        }
+        val redeemScript = utxo.getScriptPubKey
+        Some((kit, tx, utxo, isHTLC))
+      }}
+    }
+    case _ => None
+    }
+  }
 
   def editTextMessage(bot: TelegramLongPollingBot,
                       message: Message,
@@ -365,28 +388,22 @@ object Main {
     val wallets = wm.getOrElse(
       ownerId, mutable.Map()).values.toList
 
-    val txPattern = s".*${translations(Labels.TX_HASH.toString, lang).toLowerCase}: ([A-Za-z0-9]+) ?.*".r
-    val normalizedText = currentText.toLowerCase.replace("\n", " ")
-
-    val maybeHTLCTx: Option[HTLCFromTx] = normalizedText match {
-
-      case txPattern(txHash) => {
-        val htlcList = Swaps.listHTLCS(wallets)
-        val i = htlcList
-          .map(_.getHashAsString).indexWhere(_.startsWith(txHash))
-        val tx = htlcList(i)
-        val kit = wallets.find(_.getvWallet().getTransaction(tx.getHash) != null)
-        val ps = kit.get.getParams
-        val utxo = tx.getOutputs.find(out =>
-          Swaps.SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
-        ).get
-        val redeemScript = utxo.getScriptPubKey
-        Some((ps, kit.get, tx, utxo, redeemScript))
-      }
-      case _ => None
-    }
+    val maybeTx: Option[TxMeta] = findTx(currentText, wallets, lang)
 
     callbackCmd match {
+      case Callbacks.SET_MEMO => {
+
+        val (kit, tx, _, _) = maybeTx.get
+
+        println("Saving meta under" + ownerId)
+        save_meta(ownerId, "tx_coin", BSONString(kit.getCoinName))
+        save_meta(ownerId, "tx_hash", BSONString(tx.getHashAsString))
+        save_state(ownerId, States.TX_MEMO)
+
+        val msg = replyTextMessage(message.getChatId, message.getMessageId, "Enter tx memo: ")
+        bot.execute[Message, BotApiMethod[Message]](msg)
+      }
+
       case Callbacks.SWAP_LIMIT_FILL => {
 
       }
@@ -395,12 +412,11 @@ object Main {
         println("Clicked OPEN TX LINK")
       }
 
-      case Callbacks.HTLC_DO_REFUND => maybeHTLCTx match {
+      case Callbacks.HTLC_DO_REFUND => maybeTx match {
 
-        case None => println("WARN: No htlc tx")
-        case Some((ps, wallet, tx, utxo, htlc)) => {
-
-          val swap = new Swap(ps)
+        case Some((wallet, tx, utxo, true)) => {
+          val ps = wallet.getParams
+          val swap = new Swap(wallet.getParams)
           val refundScript = swap.getRefundInputScript(utxo.getScriptPubKey)
 
           val outpoint = new TransactionOutPoint(ps, utxo.getIndex, utxo.getParentTransactionHash)
@@ -452,21 +468,23 @@ object Main {
 
           bot.execute[Message, BotApiMethod[Message]](msg)
         }
+
+        case _ => println("WARN: No htlc tx")
       }
 
-      case Callbacks.VIEW_HTLC => maybeHTLCTx match {
-        case None => println("WARN: No htlc tx")
-        case Some((ps, wallet, tx, utxo, htlc)) => {
+      case Callbacks.VIEW_HTLC => maybeTx match {
+        case Some((kit, tx, utxo, true)) => {
           val text = utxo.getScriptPubKey.toString
-          //Utils.HEX.encode(tx.bitcoinSerialize())
           replyTextMessage(bot, message.getChatId, message.getMessageId, text)
         }
+
+        case _ => println("WARN: No htlc tx")
       }
 
       case Callbacks.NEXT_HTLC
-           | Callbacks.PREV_HTLC => maybeHTLCTx match {
-        case None => println("WARN: No htlc tx")
-        case Some((ps, wallet, tx, utxo, htlc)) => {
+           | Callbacks.PREV_HTLC => maybeTx match {
+
+        case Some((kit, tx, utxo, true)) => {
 
           val htlcList = Swaps.listHTLCS(wallets)
           val currentIndex = htlcList
@@ -476,24 +494,27 @@ object Main {
             currentIndex - 1 else currentIndex + 1
 
           val next = htlcList(nextIndex)
-          val newText = Swaps.showHTLC(next, wallet, nextIndex, htlcList.size, lang)
+          val newText = Swaps.showHTLC(next, kit, nextIndex, htlcList.size, lang)
 
           val inlineKeyboard = Swaps.get_htlc_list_inline_keyboard(
-            maybeHTLCTx.get, getTransactionLink(wallet.getCoinName, next), lang, nextIndex, htlcList.size)
+            maybeTx.get, getTransactionLink(kit.getCoinName, next), lang, nextIndex, htlcList.size)
 
           assert(!newText.equals(message.getText))
           editTextMessage(bot, message, inlineKeyboard, newText)
         }
+
+        case _ => println("WARN: No htlc tx")
       }
 
       // Someone locked funds for us (tx is a redeemable swap)
       // Lock our funds for them (send them a reedemable swap).
-      case Callbacks.SWAP_COUNTER_LOCK => maybeHTLCTx match {
-        case None => println("WARN: No htlc tx")
-        case Some((ps, payeeHaswallet, tx, utxo, htlc)) => {
+      case Callbacks.SWAP_COUNTER_LOCK => maybeTx match {
+        
+        case Some((payeeHaswallet, tx, utxo, true)) => {
+
           println(s"Found tx: ${tx.getHashAsString}")
           // get redeemable swap
-          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(htlc)
+          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(utxo.getScriptPubKey)
           val (secretHash, whoFunded, whoSwaps, locktime) = redeemableSwap.get
 
           // find where to lock.
@@ -560,15 +581,20 @@ object Main {
           println(Utils.HEX.encode(wantHtlcTx.bitcoinSerialize()))
           wantWallet.broadcastTransaction(wantHtlcTx)
         }
+
+        case _ => println("WARN: No htlc tx")
       }
 
       // The generator of the secret decides to sweep
       // Sweep, i.e. spend the tx locked by the counter party using our secret
-      case Callbacks.HTLC_DO_SWEEP => maybeHTLCTx match {
-        case None => println("WARN: No htlc tx")
-        case Some((ps, wallet, htlcTx, utxo, htlc)) => {
+      case Callbacks.HTLC_DO_SWEEP => maybeTx match {
+        
+        case Some((kit, tx, utxo, true)) => {
+
+          val params = kit.getParams
+
           // get redeemable swap
-          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(htlc)
+          val redeemableSwap = Swaps.SwapUtils.maybeRedeemableSwap(utxo.getScriptPubKey)
           val (secretHash, whoFunded, whoSwaps, locktime) = redeemableSwap.get
 
           // we have the hash, what's the secret?
@@ -579,28 +605,28 @@ object Main {
             USER_HTLC, ownerId, "swap_payee", secretHash.toString)
 
           val secret = Utils.HEX.decode(secret_hex.get)
-          val swap = new Swap(ps)
-          val sweepScript = swap.getSwapInputScript(htlc, secret)
+          
+          val swap = new Swap(params)
+          val sweepScript = swap.getSwapInputScript(utxo.getScriptPubKey, secret)
 
-          val outpoint = new TransactionOutPoint(ps, utxo.getIndex, utxo.getParentTransactionHash)
-          val txInput = new TransactionInput(ps, htlcTx, sweepScript.getProgram, outpoint, utxo.getValue)
+          val outpoint = new TransactionOutPoint(params, utxo.getIndex, utxo.getParentTransactionHash)
+          val txInput = new TransactionInput(params, tx, sweepScript.getProgram, outpoint, utxo.getValue)
 
           // 512 seconds
-          //txInput.setSequenceNumber(2L)
-          val spendTx = new Transaction(ps)
+          val spendTx = new Transaction(params)
           spendTx.addInput(txInput)
 
-          val feePerKb = if (!wallet.getParams.getUseForkId)
+          val feePerKb = if (!params.getUseForkId)
             Transaction.DEFAULT_TX_FEE
           else
             Transaction.BCC_DEFAULT_TX_FEE
 
           if (swap_payee.isDefined) {
-            val channel = wallet.getBip47MetaForPaymentCode(swap_payee.get)
-            val payeeAddress = nextAddress(wallet, channel)
+            val channel = kit.getBip47MetaForPaymentCode(swap_payee.get)
+            val payeeAddress = nextAddress(kit, channel)
             spendTx.addOutput(utxo.getValue, payeeAddress)
           } else {
-            spendTx.addOutput(utxo.getValue, wallet.getCurrentAddress)
+            spendTx.addOutput(utxo.getValue, kit.getCurrentAddress)
           }
 
           val feeAmount = feePerKb.div(1000).multiply(spendTx.getMessageSize);
@@ -610,7 +636,7 @@ object Main {
           spendTx.setVersion(2)
 
           val sighash = spendTx.hashForSignature(0, utxo.getScriptPubKey.getProgram, Transaction.SigHash.ALL.byteValue())
-          val signKey = wallet.getAccount(0).keyAt(0)
+          val signKey = kit.getAccount(0).keyAt(0)
           val mySig: ECKey.ECDSASignature = signKey.sign(sighash)
           val txSig = new TransactionSignature(mySig, SigHash.ALL, false)
 
@@ -627,15 +653,17 @@ object Main {
           }
 
           spendTx.clearInputs()
-          val txInput2 = new TransactionInput(ps, htlcTx, reinputScript.getProgram, outpoint, utxo.getValue)
+          val txInput2 = new TransactionInput(params, tx, reinputScript.getProgram, outpoint, utxo.getValue)
           txInput.setScriptSig(reinputScript)
           spendTx.addInput(txInput2)
           assert(spendTx.getInputs.size == 1)
 
           assert(spendTx.getFee.isPositive)
           println(Utils.HEX.encode(spendTx.bitcoinSerialize()))
-          wallet.broadcastTransaction(spendTx)
+          kit.broadcastTransaction(spendTx)
         }
+
+        case _ => println("WARN: No htlc tx")
       }
 
       case e => {
@@ -866,8 +894,7 @@ object Main {
     }
 
     println(s"Incoming message: ${incomingMsg}")
-    println(s"back message: ${backCmd}")
-    println(backCmd.equals(incomingMsg))
+
   
     // filter general buttons
     incomingMsg match {
@@ -906,7 +933,7 @@ object Main {
           save_state(m, MAINMENU)
         }
       }
-      case x => {} //println(s"Unmatched handler: ${x}")
+      case x => { println(s"Unmatched handler: ${x}") }
     }
   
     val state = get_state(m.getFrom.getId())
@@ -983,6 +1010,21 @@ object Main {
           }
         }
       }
+
+      case TX_MEMO => {
+        val coin = get_meta_string(m, "tx_coin").get
+        val txHash = get_meta_string(m, "tx_hash").get
+        
+        val wallets = wm(m.getFrom.getId)
+        val kit: BIP47AppKit = wallets(coin)
+        val tx = kit.getTransactions.find(_.getHashAsString.startsWith(txHash)).get
+
+        print(s"Setting tx memo to ${m.getText}")
+        tx.setMemo(m.getText)
+        clean_meta(m)
+        replyTextMessage(m, "Memo set")        
+      }
+
       case _ => {
         println(s"Unhandled state: ${state}")
         messageOnMainMenu(m, lang)
@@ -1011,8 +1053,6 @@ object Main {
   *   * BCH
   *   * BSV
   */
-
-
 
   def nextAddress(kit: BIP47AppKit, channel: BIP47Channel): Address = {
     assert(channel != null)

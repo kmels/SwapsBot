@@ -13,7 +13,8 @@ package object Types {
 
   // *** HTLC
   type LimitSwap = (String, Float, Long, Sha256Hash)
-  type HTLCFromTx = (NetworkParameters, BIP47AppKit, Transaction, TransactionOutput, Script)
+  type IsHTLC = Boolean
+  type TxMeta = (BIP47AppKit, Transaction, TransactionOutput, IsHTLC)
   type RedeemableSwap = (Sha256Hash, Pubkey, Pubkey, Long)
 
   // *** Keyboard

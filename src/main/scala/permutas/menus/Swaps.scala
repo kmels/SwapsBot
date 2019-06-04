@@ -100,13 +100,13 @@ package object Swaps {
     }
   }
 
-  def get_htlc_list_inline_keyboard(htlc: HTLCFromTx,
+  def get_htlc_list_inline_keyboard(htlc: TxMeta,
                                     url: String,
                                     lang: String,
                                     current: Int,
                                     total: Int): InlineKeyboardMarkup = {
 
-    println(s"Htlc keyboard for: ${htlc._3.getHashAsString}")
+    println(s"Htlc keyboard for: ${htlc._2.getHashAsString}")
     if (total == 0) {
       println("Warn, empty message keyboard")
       return row_msg_keyboard(Nil, lang)
@@ -131,8 +131,9 @@ package object Swaps {
 
     // if the swap key corresponds, it's a sweep
     // if the refune key corresponds, it's a refund
-    val (ps, kit, tx, utxo, redeemScript) = htlc
+    val (kit, tx, utxo, true) = htlc
 
+    val redeemScript = utxo.getScriptPubKey
     val swapPubkey = redeemScript.getChunks.get(4).data
     val refundPubkey = redeemScript.getChunks.get(10).data
     val notificationKey = kit.getAccount(0).keyAt(0);
@@ -252,8 +253,7 @@ package object Swaps {
           val utxo = first.getOutputs.find(out =>
             SwapUtils.maybeRedeemableSwap(out.getScriptPubKey).isDefined
           ).get
-          val redeemScript = utxo.getScriptPubKey
-          val htlc = (wallet.get.getParams, wallet.get, first, utxo, redeemScript)
+          val htlc = (wallet.get, first, utxo, true)
           val inlineKeyboard = get_htlc_list_inline_keyboard(htlc,
             getTransactionLink(coin, first), lang, 0, htlcList.size)
           reply.setReplyMarkup(inlineKeyboard)

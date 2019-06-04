@@ -192,13 +192,24 @@ package object MongoDb {
     save_db(USER_META_COLLECTION, m.getFrom.getId, s"data.${key}", value)
   }
 
+  def save_meta(ownerId: Int, key: String, value: BSONValue) = {
+    println(s"Saving ${key} ... ") //=> ${value}")
+    save_db(USER_META_COLLECTION, ownerId, s"data.${key}", value)
+  }
+
   def clean_meta(m: Message) =
     save_db(USER_META_COLLECTION, m.getFrom.getId, "data", document())
 
   def save_state(m: Message, state: States.Value): Unit = {
     val who = m.getFrom.getId
     println(s"Saving state of ${who} to ${state.toString()}")
-    val v: BSONDocument = document("state" -> state.toString) //Document("state" -> state.toString()
+    val v: BSONDocument = document("state" -> state.toString)
+    save_db(USER_STATE_COLLECTION, who, "data", v)
+  }
+
+  def save_state(who: Int, state: States.Value): Unit = {
+    println(s"Saving state of ${who} to ${state.toString()}")
+    val v: BSONDocument = document("state" -> state.toString)
     save_db(USER_STATE_COLLECTION, who, "data", v)
   }
 }

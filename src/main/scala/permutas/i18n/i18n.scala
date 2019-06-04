@@ -5,8 +5,8 @@ package object i18n {
 
   val translations: Map[(String, String), String] = Map(
     // Commands
-    (Commands.ADD_PAYEE.toString, "en") -> "➕ Reusable Address",
-    (Commands.ADD_PAYEE.toString, "es") -> "➕ Direccion Reusable",
+    (Commands.ADD_PAYEE.toString, "en") -> "➕ Payment code",
+    (Commands.ADD_PAYEE.toString, "es") -> "➕ Código de pago",
     (Commands.ADDRESS_LIST.toString, "en") -> "\uD83D\uDCD6 Addressses",
     (Commands.ADDRESS_LIST.toString, "es") -> "\uD83D\uDCD6 Direcciones",
     //(Commands.ACTIVE_SWAPS.toString, "en") -> "\uD83D\uDD02 Current swaps",

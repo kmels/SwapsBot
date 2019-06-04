@@ -23,6 +23,7 @@ object States extends Enumeration {
   SPEND_COIN_TO_NTX,
   SWAPSMENU,
   STARTSTATE,
+  TX_MEMO,    
   UNITS,
   WALLET_PEERS,
   WALLETMENU,
